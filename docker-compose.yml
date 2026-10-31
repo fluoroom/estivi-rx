@@ -1,0 +1,12 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8080:80"
+    depends_on:
+      - recovery
+  recovery:
+    image: python:3.13-alpine
+    command: ["python", "-u", "/srv/recovery.py"]
+    volumes:
+      - ./proxy/recovery.py:/srv/recovery.py:ro

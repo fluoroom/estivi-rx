@@ -1,0 +1,5 @@
+.git
+node_modules
+test
+*.md
+just_for_initial_commit.txt

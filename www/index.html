@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>estivi</title>
+  <link rel="stylesheet" href="css/app.css">
+</head>
+<body>
+  <header>
+    <h1>estivi</h1>
+    <label class="field">
+      <span>Device</span>
+      <select id="device">
+        <option value="">Default</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Channel</span>
+      <select id="channel">
+        <option value="mono">Mono</option>
+        <option value="left">Left</option>
+        <option value="right">Right</option>
+      </select>
+    </label>
+    <label class="field">
+      <span>Input gain</span>
+      <span class="inline">
+        <input id="gain" type="range" min="-12" max="36" step="0.5" value="0">
+        <span id="gain-out">0 dB</span>
+      </span>
+    </label>
+    <div class="field vu">
+      <span>Level</span>
+      <span class="inline">
+        <div id="vu-bar"></div>
+        <span id="vu-read">—</span>
+      </span>
+    </div>
+    <label class="field">
+      <span>SSTV mode</span>
+      <select id="mode">
+        <option value="auto">Auto</option>
+      </select>
+    </label>
+    <button type="button" id="run">Start receiving</button>
+    <button type="button" id="theme">Light</button>
+  </header>
+  <p id="err" hidden></p>
+  <main>
+    <section class="visor">
+      <div class="stage" id="stage">
+      <div class="picture" id="picture">
+        <canvas id="live" width="320" height="256"></canvas>
+        <canvas id="noise" width="320" height="256" hidden></canvas>
+        <img id="still" alt="" hidden>
+        <canvas id="scale" hidden></canvas>
+      </div>
+      </div>
+      <div class="bar">
+        <div class="name" id="name"></div>
+        <button type="button" id="scale-mode">Bicubic</button>
+        <button type="button" id="save">Save</button>
+        <button type="button" id="dgt">DGT YQ</button>
+        <button type="button" id="full">Fullscreen</button>
+        <button type="button" id="reset">Reset</button>
+      </div>
+    </section>
+    <div class="timeline-row">
+      <div class="scroller" id="timeline"></div>
+      <button type="button" id="clear">Clear image memory</button>
+    </div>
+    <div class="guide">
+      <div class="hours">
+        <div class="axis-row">
+          <div class="call-spacer" id="call-spacer" hidden></div>
+          <div class="axis" id="axis"></div>
+        </div>
+        <div id="lanes"></div>
+        <div id="marks" class="marks"></div>
+      </div>
+      <button type="button" id="cal">Calendar</button>
+    </div>
+  </main>
+  <footer>LU1AQY 2026</footer>
+  <dialog id="calendar">
+    <div class="dialog-bar">
+      <h2>Calendar</h2>
+      <button type="button" id="close-cal">Close</button>
+    </div>
+    <div id="cal-body"></div>
+  </dialog>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
