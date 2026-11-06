@@ -1,11 +1,22 @@
 // Program guide built from Estivi info frames.
-// The frame has no date and no timezone. Weekday names are the English
-// abbreviations the transmitter sends. A horizon covers daysleft 0.
+// A frame has no date and no timezone: HH:MM is UTC and weekdays are the
+// English abbreviations the transmitter sends. Programs are kept as UTC rules
+// and placed on the local calendar when the guide is built.
+//
+// A common block is a program with no DAYS line. It has no day, so it is
+// dropped. A rule with DAYSLEFT 0 is infinite; 1..99 lasts that many days from
+// the local day it was heard. Rules stay in storage until the calendar is
+// cleared.
 
-export const HORIZON_DAYS = 14;
-export const MEMORY_MS = 7 * 24 * 60 * 60 * 1000;
+export const GUIDE_DAYS = 14;
+export const MAX_DAYSLEFT = 99;
+export const EXTRA_SPAN_MS = 12 * 60 * 60 * 1000;
 
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const DAY_NAMES = new Map(WD.map((d) => [d.toLowerCase(), d]));
+const DAY_ORDER = new Map(WD.map((d, i) => [d, i]));
+const DAY_MS = 86400000;
+const TINY_MS = 9000;
 
 export function emptyGuide() {
   return { stations: {} };
@@ -28,24 +39,38 @@ export function dateKey(d) {
   return `${d.getFullYear()}-${d.getMonth() + 1}-${d.getDate()}`;
 }
 
-function startOfDay(d) {
+function startOfLocalDay(d) {
   return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function addDays(d, n) {
-  const x = startOfDay(d);
+function addLocalDays(d, n) {
+  const x = startOfLocalDay(d);
   x.setDate(x.getDate() + n);
   return x;
 }
 
-function dayIndex(heardAt, date) {
-  const a = startOfDay(new Date(heardAt));
-  const b = startOfDay(date);
-  return Math.round((b - a) / 86400000);
+// Calendar-day distance, immune to the 23/25 hour days around DST.
+function civilDayDiff(a, b) {
+  return Math.round(
+    (Date.UTC(b.getFullYear(), b.getMonth(), b.getDate()) -
+      Date.UTC(a.getFullYear(), a.getMonth(), a.getDate())) /
+      DAY_MS,
+  );
 }
 
-function weekday(d) {
-  return WD[d.getDay()];
+function normalizeDays(days) {
+  const set = new Set();
+  for (const raw of days || []) {
+    const name = DAY_NAMES.get(String(raw).trim().toLowerCase());
+    if (name) set.add(name);
+  }
+  return [...set].sort((a, b) => DAY_ORDER.get(a) - DAY_ORDER.get(b));
+}
+
+function readDaysleft(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(MAX_DAYSLEFT, Math.trunc(v)));
 }
 
 function upsert(list, item) {
@@ -55,244 +80,256 @@ function upsert(list, item) {
   else list.push(item);
 }
 
+function makeRule(name, range, parsed, days, daysleft, now) {
+  return {
+    name,
+    range,
+    start: parsed.start,
+    end: parsed.end,
+    crosses: parsed.crosses,
+    days: normalizeDays(days),
+    daysleft: readDaysleft(daysleft),
+    heardAt: now.getTime(),
+  };
+}
+
 export function ingest(state, packet, now) {
   if (!packet || packet.kind !== "info") return state;
   const call = packet.call || (packet.src && packet.src.call) || "";
   if (!call) return state;
-  const st = state.stations[call] || { programs: [], commons: [], currentCommon: null, heardAt: 0 };
-  st.heardAt = now.getTime();
+
+  const st = state.stations[call] || null;
+  const programs = st && Array.isArray(st.programs) ? st.programs : [];
+  let changed = false;
+
   const pr = parseRange(packet.range);
-  if (packet.name && pr && packet.days && packet.days.length) {
-    upsert(st.programs, {
-      name: packet.name,
-      range: packet.range,
-      start: pr.start,
-      end: pr.end,
-      crosses: pr.crosses,
-      days: packet.days.slice(),
-      daysleft: packet.daysleft == null ? 0 : packet.daysleft,
-      heardAt: now.getTime(),
-    });
-    st.currentCommon = null;
-  } else if (packet.name && pr) {
-    st.currentCommon = {
-      name: packet.name,
-      range: packet.range,
-      start: pr.start,
-      end: pr.end,
-      crosses: pr.crosses,
-      heardAt: now.getTime(),
-      onDate: dateKey(now),
-    };
-  }
-  const commons = [];
-  for (const n of packet.next || []) {
-    const nr = parseRange(n.range);
-    if (!nr || !n.name) continue;
-    if (n.days && n.days.length) {
-      upsert(st.programs, {
-        name: n.name,
-        range: n.range,
-        start: nr.start,
-        end: nr.end,
-        crosses: nr.crosses,
-        days: n.days.slice(),
-        daysleft: n.daysleft == null ? 0 : n.daysleft,
-        heardAt: now.getTime(),
-      });
-    } else {
-      commons.push({
-        call,
-        name: n.name,
-        range: n.range,
-        start: nr.start,
-        end: nr.end,
-        crosses: nr.crosses,
-      });
+  if (packet.name && pr) {
+    const days = normalizeDays(packet.days);
+    // No DAYS line is a common block: it is dropped.
+    if (days.length) {
+      upsert(programs, makeRule(packet.name, packet.range, pr, days, packet.daysleft, now));
+      changed = true;
     }
   }
-  st.commons = commons;
-  state.stations[call] = st;
+
+  for (const n of packet.next || []) {
+    const nr = parseRange(n.range);
+    const days = normalizeDays(n.days);
+    if (!n.name || !nr || !days.length) continue;
+    upsert(programs, makeRule(n.name, n.range, nr, days, n.daysleft, now));
+    changed = true;
+  }
+
+  if (!changed && !st) return state;
+  if (st) st.heardAt = now.getTime();
+  else state.stations[call] = { programs, heardAt: now.getTime() };
   return state;
 }
 
-function fresh(heardAt, now) {
-  return now.getTime() - heardAt <= MEMORY_MS;
+function ruleMinutes(rule) {
+  return rule.crosses ? 1440 - rule.start + rule.end : rule.end - rule.start;
 }
 
-function ruleActive(rule, date) {
-  const i = dayIndex(rule.heardAt, date);
+function activeOn(rule, localDate) {
+  const i = civilDayDiff(new Date(rule.heardAt), localDate);
   if (i < 0) return false;
-  if (rule.daysleft > 0) return i < rule.daysleft;
-  return i < HORIZON_DAYS;
+  return rule.daysleft === 0 || i < rule.daysleft;
 }
 
-function programIntervals(rule, date) {
+// Every rule occurrence whose interval intersects [fromMs, toMs). The weekday
+// and clock in the packet are UTC; the local day at the start of the occurrence
+// is what DAYSLEFT counts from.
+function occurrences(state, fromMs, toMs) {
+  const rules = [];
+  for (const [call, st] of Object.entries(state.stations || {})) {
+    for (const rule of st.programs || []) rules.push({ call, rule });
+  }
+  if (!rules.length) return [];
+
   const out = [];
-  if (rule.days.includes(weekday(date)) && ruleActive(rule, date)) {
-    out.push({
-      start: rule.start,
-      end: rule.crosses ? 1440 : rule.end,
-      range: rule.range,
-      name: rule.name,
-    });
-  }
-  const prev = addDays(date, -1);
-  if (rule.crosses && rule.days.includes(weekday(prev))) {
-    const i = dayIndex(rule.heardAt, prev);
-    const life = rule.daysleft > 0 ? rule.daysleft : HORIZON_DAYS;
-    if (i >= -1 && i < life) {
-      out.push({ start: 0, end: rule.end, range: rule.range, name: rule.name });
+  const first = new Date(fromMs);
+  const last = new Date(toMs);
+  let cursor = Date.UTC(first.getUTCFullYear(), first.getUTCMonth(), first.getUTCDate()) - 2 * DAY_MS;
+  const limit = Date.UTC(last.getUTCFullYear(), last.getUTCMonth(), last.getUTCDate()) + 2 * DAY_MS;
+  for (; cursor <= limit; cursor += DAY_MS) {
+    const utcDay = new Date(cursor);
+    const wd = WD[utcDay.getUTCDay()];
+    for (const { call, rule } of rules) {
+      if (!rule.days.includes(wd)) continue;
+      const startMs = cursor + rule.start * 60000;
+      const endMs = startMs + ruleMinutes(rule) * 60000;
+      if (endMs <= fromMs || startMs >= toMs) continue;
+      if (!activeOn(rule, new Date(startMs))) continue;
+      out.push({ call, name: rule.name, range: rule.range, startMs, endMs });
     }
   }
+  out.sort(
+    (a, b) =>
+      a.startMs - b.startMs ||
+      a.call.localeCompare(b.call) ||
+      a.name.localeCompare(b.name),
+  );
   return out;
-}
-
-function commonIntervals(common, date) {
-  const key = dateKey(date);
-  const out = [];
-  if (key === common.onDate) {
-    out.push({
-      start: common.start,
-      end: common.crosses ? 1440 : common.end,
-      range: common.range,
-      name: common.name,
-    });
-  }
-  if (common.crosses && key === dateKey(addDays(parseKey(common.onDate), 1))) {
-    out.push({ start: 0, end: common.end, range: common.range, name: common.name });
-  }
-  return out;
-}
-
-function parseKey(key) {
-  const [y, m, d] = key.split("-").map(Number);
-  return new Date(y, m - 1, d);
-}
-
-function overlaps(a, b) {
-  return a.start < b.end && b.start < a.end;
-}
-
-function pack(blocks) {
-  let cross = false;
-  for (let i = 0; i < blocks.length && !cross; i++) {
-    for (let j = i + 1; j < blocks.length; j++) {
-      if (blocks[i].call !== blocks[j].call && overlaps(blocks[i], blocks[j])) {
-        cross = true;
-        break;
-      }
-    }
-  }
-  const calls = [...new Set(blocks.map((b) => b.call))].sort((a, b) => a.localeCompare(b));
-  if (!cross) {
-    const items = blocks.slice().sort((a, b) => a.start - b.start || a.name.localeCompare(b.name));
-    return [{ call: calls.length === 1 ? calls[0] : "", blocks: items }];
-  }
-  return calls.map((call) => ({
-    call,
-    blocks: blocks.filter((b) => b.call === call).sort((a, b) => a.start - b.start),
-  }));
-}
-
-function blocksOn(state, date, now) {
-  const blocks = [];
-  for (const [call, st] of Object.entries(state.stations)) {
-    if (!fresh(st.heardAt, now)) continue;
-    for (const rule of st.programs) {
-      if (!fresh(rule.heardAt, now)) continue;
-      for (const iv of programIntervals(rule, date)) {
-        blocks.push({ call, name: iv.name, range: iv.range, start: iv.start, end: iv.end });
-      }
-    }
-    if (st.currentCommon) {
-      for (const iv of commonIntervals(st.currentCommon, date)) {
-        blocks.push({ call, name: iv.name, range: iv.range, start: iv.start, end: iv.end });
-      }
-    }
-  }
-  return blocks;
 }
 
 export function buildGuide(state, now) {
-  const nowMin = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-  const todayBlocks = blocksOn(state, now, now).filter((b) => b.end > nowMin + 0.05);
+  const nowMs = now.getTime();
+  const day0 = startOfLocalDay(now);
+  const day0Ms = day0.getTime();
+  const day1Ms = addLocalDays(day0, 1).getTime();
+  const blocks = occurrences(
+    state,
+    addLocalDays(day0, -1).getTime(),
+    addLocalDays(day0, GUIDE_DAYS + 1).getTime(),
+  );
+
+  // The hour row runs until the latest program that is still running or still
+  // ahead on today's local calendar. With nothing left it runs to midnight.
+  const todayBlocks = blocks.filter((b) => b.endMs > day0Ms && b.startMs < day1Ms);
+  const later = todayBlocks.filter((b) => b.endMs > nowMs);
   let end = 1440;
-  if (todayBlocks.length) end = Math.max(...todayBlocks.map((b) => b.end));
-  const lanes = pack(todayBlocks).map((lane) => ({
-    call: lane.call,
-    blocks: lane.blocks
-      .map((b) => ({
-        ...b,
-        viewStart: Math.max(b.start, nowMin),
-        viewEnd: Math.min(b.end, end),
-      }))
-      .filter((b) => b.viewEnd > b.viewStart + 0.15),
-  })).filter((lane) => lane.blocks.length);
+  if (later.length) {
+    end = Math.max(
+      ...later.map((b) => Math.min(1440, (Math.min(b.endMs, day1Ms) - day0Ms) / 60000)),
+    );
+  }
 
+  const days = [];
   let last = 0;
-  const dayBlocks = [];
-  for (let i = 0; i < HORIZON_DAYS; i++) {
-    const date = addDays(now, i);
-    const blocks = blocksOn(state, date, now);
-    dayBlocks.push({ date, blocks });
-    if (blocks.length) last = i;
+  for (let i = 0; i < GUIDE_DAYS; i++) {
+    const date = addLocalDays(day0, i);
+    const a = date.getTime();
+    const z = addLocalDays(date, 1).getTime();
+    const items = blocks
+      .filter((b) => b.startMs >= a && b.startMs < z)
+      .map((b) => ({
+        call: b.call,
+        name: b.name,
+        range: b.range,
+        // Local minutes from the start of this local day. A range that crosses
+        // midnight keeps one block and its end goes past 1440.
+        start: Math.round((b.startMs - a) / 60000),
+        end: Math.round((b.endMs - a) / 60000),
+        startMs: b.startMs,
+        endMs: b.endMs,
+      }));
+    if (i === 0) {
+      // A block that began before today and is still running keeps its whole
+      // range on today's card too, with a negative start that wraps in local
+      // time (23:30-00:30), instead of being cut at 00:00.
+      for (const b of blocks) {
+        if (b.startMs >= a || b.endMs <= nowMs) continue;
+        items.push({
+          call: b.call,
+          name: b.name,
+          range: b.range,
+          start: Math.round((b.startMs - a) / 60000),
+          end: Math.round((b.endMs - a) / 60000),
+          startMs: b.startMs,
+          endMs: b.endMs,
+        });
+      }
+    }
+    items.sort(
+      (a, b) =>
+        a.start - b.start ||
+        a.call.localeCompare(b.call) ||
+        a.name.localeCompare(b.name),
+    );
+    days.push({ date, blocks: items });
+    if (items.length) last = i;
   }
-  const days = dayBlocks.slice(0, Math.max(1, last + 1)).map(({ date, blocks }) => ({
-    date,
-    columns: blocks.length ? pack(blocks) : [{ call: "", blocks: [] }],
-  }));
 
-  const undated = [];
-  for (const [call, st] of Object.entries(state.stations)) {
-    if (!fresh(st.heardAt, now)) continue;
-    for (const c of st.commons) undated.push({ call, name: c.name, range: c.range });
-  }
-  undated.sort((a, b) => a.range.localeCompare(b.range) || a.call.localeCompare(b.call));
-
-  return { start: nowMin, end, lanes, days, undated };
+  return {
+    start: (nowMs - day0Ms) / 60000,
+    end,
+    days: days.slice(0, Math.max(1, last + 1)),
+    blocks,
+  };
 }
 
-export const EXTRA_SPAN_MS = 12 * 60 * 60 * 1000;
+// Only blocks that overlap share lanes. A cluster of overlapping blocks is
+// colored with the smallest number of lanes; a block that does not overlap
+// anything gets a single lane and the full height (row) or width (calendar).
+// Same-callsign overlaps are split too.
+export function layoutBlocks(blocks) {
+  const sorted = blocks
+    .slice()
+    .sort(
+      (a, b) =>
+        a.start - b.start ||
+        a.end - b.end ||
+        (a.call || "").localeCompare(b.call || "") ||
+        (a.name || "").localeCompare(b.name || ""),
+    );
+  const clusters = [];
+  let cur = null;
+
+  const close = () => {
+    if (!cur) return;
+    const lanes = [];
+    for (const b of cur.blocks) {
+      let lane = lanes.findIndex((l) => l.end <= b.start);
+      if (lane < 0) {
+        lane = lanes.length;
+        lanes.push({ end: b.end, blocks: [] });
+      }
+      lanes[lane].blocks.push(b);
+      lanes[lane].end = Math.max(lanes[lane].end, b.end);
+    }
+    for (let i = 0; i < lanes.length; i++) {
+      for (const b of lanes[i].blocks) {
+        b.lane = i;
+        b.laneCount = lanes.length;
+      }
+    }
+    clusters.push({
+      start: cur.start,
+      end: cur.end,
+      blocks: cur.blocks,
+      lanes: lanes.map((l) => l.blocks),
+    });
+  };
+
+  for (const b of sorted) {
+    if (!cur || b.start >= cur.end) {
+      close();
+      cur = { start: b.start, end: b.end, blocks: [b] };
+    } else {
+      cur.blocks.push(b);
+      cur.end = Math.max(cur.end, b.end);
+    }
+  }
+  close();
+  return clusters;
+}
+
+export function layoutInSpan(blocks, startMs, endMs) {
+  const items = [];
+  for (const b of blocks) {
+    const start = Math.max(b.startMs, startMs);
+    const end = Math.min(b.endMs, endMs);
+    if (end - start < TINY_MS) continue;
+    items.push({ ...b, start, end });
+  }
+  return layoutBlocks(items);
+}
 
 // The hour row keeps a stable clock span so the current-time mark can travel.
 // It begins at the top of the hour and runs until 12 hours past the last program.
 export function extendSpan(now, guideEndMin, guideStartMin, pinned) {
-  const day0 = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
   let endMin = guideEndMin;
   if (!(endMin > guideStartMin)) endMin = Math.min(1440, guideStartMin + 30);
-  const endMs = day0 + endMin * 60000 + EXTRA_SPAN_MS;
+  const endBase = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, endMin);
+  const endMs = endBase.getTime() + EXTRA_SPAN_MS;
   const nowMs = now.getTime();
   let start = pinned && pinned.start;
   let end = pinned && pinned.end;
   if (start == null || nowMs < start || nowMs >= end) {
-    const hour = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours()).getTime();
-    start = hour;
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), now.getHours()).getTime();
     end = Math.max(endMs, start + EXTRA_SPAN_MS);
   } else if (endMs > end) {
     end = endMs;
   }
   return { start, end };
-}
-
-export function lanesInSpan(days, startMs, endMs) {
-  const blocks = [];
-  for (const day of days) {
-    const day0 = new Date(day.date.getFullYear(), day.date.getMonth(), day.date.getDate()).getTime();
-    if (day0 + 86400000 <= startMs || day0 >= endMs) continue;
-    for (const col of day.columns) {
-      for (const b of col.blocks) {
-        const bStart = day0 + b.start * 60000;
-        const bEnd = day0 + b.end * 60000;
-        if (bEnd <= startMs || bStart >= endMs) continue;
-        blocks.push({
-          call: b.call || col.call || "",
-          name: b.name,
-          start: Math.max(bStart, startMs),
-          end: Math.min(bEnd, endMs),
-        });
-      }
-    }
-  }
-  return pack(blocks);
 }

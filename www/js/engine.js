@@ -26,7 +26,6 @@ export class Engine {
     this.programName = "";
     this.call = "";
     this.pendingMark = "";
-    this.pendingStamp = "";
     this.pendingAt = 0;
     this.imageMeta = null;
     this.sstv.emit = (ev) => this._sstv(ev);
@@ -56,9 +55,8 @@ export class Engine {
   _ax(parsed) {
     if (parsed.kind === "mode") {
       this.pendingMark = parsed.mark || "";
-      this.pendingStamp = parsed.stamp || "";
       this.pendingAt = Date.now();
-      this.onEvent({ type: "mode", short: parsed.short, mark: parsed.mark || "", stamp: parsed.stamp || "" });
+      this.onEvent({ type: "mode", short: parsed.short, mark: parsed.mark || "" });
       return;
     }
     if (parsed.kind !== "info") return;
@@ -75,23 +73,18 @@ export class Engine {
   _sstv(ev) {
     if (ev.type === "rx") {
       let mark = "";
-      let stamp = "";
       if (this.pendingAt && Date.now() - this.pendingAt < 20000) {
         mark = this.pendingMark || "";
-        stamp = this.pendingStamp || "";
       }
       this.pendingMark = "";
-      this.pendingStamp = "";
       this.pendingAt = 0;
       ev.mark = mark;
-      ev.stamp = stamp;
       ev.call = this.call;
       ev.name = formatLabel(this.programName, mark);
-      this.imageMeta = { name: ev.name, call: this.call, mode: ev.mode, mark, stamp };
+      this.imageMeta = { name: ev.name, call: this.call, mode: ev.mode, mark };
     } else if (ev.type === "rx-end" && this.imageMeta) {
       ev.name = this.imageMeta.name;
       ev.call = this.imageMeta.call;
-      ev.stamp = this.imageMeta.stamp || "";
       this.imageMeta = null;
     }
     this.onEvent(ev);

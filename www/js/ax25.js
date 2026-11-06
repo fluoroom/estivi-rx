@@ -54,13 +54,8 @@ export function parseEstivi(text) {
     const rest = head.slice("ESTIVI MODE ".length).trim();
     const parts = rest.split(/\s+/).filter(Boolean);
     const short = parts[0] || "";
-    let mark = "";
-    let stamp = "";
-    for (const part of parts.slice(1)) {
-      if (/^\d{14}$/.test(part)) stamp = part;
-      else if (!mark) mark = part;
-    }
-    return { kind: "mode", short: clip(short, 8), mark: MARKS.has(mark) ? mark : "", stamp };
+    const mark = parts[1] && MARKS.has(parts[1]) ? parts[1] : "";
+    return { kind: "mode", short: clip(short, 8), mark };
   }
   if (head !== "ESTIVI 1") return null;
   const out = {

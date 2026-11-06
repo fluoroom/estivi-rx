@@ -3,12 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>estivi</title>
+  <title>estivi rx</title>
   <link rel="stylesheet" href="css/app.css">
 </head>
 <body>
   <header>
-    <h1>estivi</h1>
+    <h1>estivi rx</h1>
+    <div class="clock" id="clock" title="Local time with seconds, UTC underneath">
+      <span id="clock-local">--:--:--</span>
+      <span id="clock-utc">UTC --:--:--</span>
+    </div>
     <label class="field">
       <span>Device</span>
       <select id="device">
@@ -61,7 +65,6 @@
         <div class="name" id="name"></div>
         <button type="button" id="scale-mode">Bicubic</button>
         <button type="button" id="save">Save</button>
-        <button type="button" id="dgt">DGT YQ</button>
         <button type="button" id="full">Fullscreen</button>
         <button type="button" id="reset">Reset</button>
       </div>
@@ -73,13 +76,15 @@
     <div class="guide">
       <div class="hours">
         <div class="axis-row">
-          <div class="call-spacer" id="call-spacer" hidden></div>
           <div class="axis" id="axis"></div>
         </div>
         <div id="lanes"></div>
         <div id="marks" class="marks"></div>
       </div>
-      <button type="button" id="cal">Calendar</button>
+      <div class="guide-actions">
+        <button type="button" id="cal">Calendar</button>
+        <button type="button" id="clear-cal">Clear calendar</button>
+      </div>
     </div>
   </main>
   <footer>LU1AQY 2026</footer>

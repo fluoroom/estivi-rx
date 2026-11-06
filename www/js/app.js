@@ -1,15 +1,14 @@
 import { Engine } from "./engine.js";
 import { MODES } from "./modes.js";
-import { remoteName, searchNames } from "./recovery.js";
-import { buildGuide, extendSpan, ingest, lanesInSpan } from "./schedule.js";
+import { buildGuide, extendSpan, ingest, layoutBlocks, layoutInSpan } from "./schedule.js";
 import {
+  clearGuide,
   clearImages,
   loadGuide,
   loadImages,
   loadPrefs,
   rememberImage,
   saveGuide,
-  saveImages,
   savePrefs,
 } from "./store.js";
 
@@ -17,25 +16,25 @@ const $ = (id) => document.getElementById(id);
 
 const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-const prefs = loadPrefs();
-let guideState = loadGuide();
-let images = loadImages();
+let prefs = {};
+let guideState = { stations: {} };
+let images = [];
 let pinned = null;
-let showing = images.length ? "still" : "live";
+let showing = "live";
 let selectedId = null;
 let liveName = "";
 let receivingPicture = false;
 let heldPicture = false;
-let recoveredLive = false;
-let liveRecovery = { mode: "", call: "", stamp: "", at: 0 };
 let receiving = false;
 let engine = null;
 let audio = null;
 let seq = 0;
+let rxSeq = 0;
+let imageSeq = 0;
 let fillingDevices = false;
-let channelMode = prefs.channel === "left" || prefs.channel === "right" ? prefs.channel : "mono";
-let theme = prefs.theme === "light" ? "light" : "dark";
-let scaleMode = prefs.scale === "bicubic" ? "bicubic" : "neighbor";
+let channelMode = "mono";
+let theme = "dark";
+let scaleMode = "neighbor";
 let vu = 0;
 let pictureAr = 320 / 256;
 let revealedRow = 0;
@@ -64,10 +63,12 @@ function paintGainTrack() {
   $("gain-out").classList.toggle("hot", Number(el.value) > 0);
 }
 
+// Display local HH:MM for a minute count; values past 1440 wrap, so a range
+// 23:30-00:30 is shown whole and never cut at midnight.
 function hhmm(mins) {
-  if (mins >= 1440) return "24:00";
-  const m = Math.max(0, Math.floor(mins));
-  const h = Math.floor(m / 60) % 24;
+  const total = Math.round(Number(mins) || 0);
+  const m = ((total % 1440) + 1440) % 1440;
+  const h = Math.floor(m / 60);
   const min = m % 60;
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
@@ -75,6 +76,24 @@ function hhmm(mins) {
 function clock(ms) {
   const d = new Date(ms);
   return hhmm(d.getHours() * 60 + d.getMinutes());
+}
+
+function clockRange(startMs, endMs) {
+  return `${clock(startMs)}–${clock(endMs)}`;
+}
+
+function two(n) {
+  return String(n).padStart(2, "0");
+}
+
+function updateClock() {
+  const now = new Date();
+  $("clock-local").textContent = `${two(now.getHours())}:${two(now.getMinutes())}:${two(
+    now.getSeconds(),
+  )}`;
+  $("clock-utc").textContent = `UTC ${two(now.getUTCHours())}:${two(now.getUTCMinutes())}:${two(
+    now.getUTCSeconds(),
+  )}`;
 }
 
 function selectedMode() {
@@ -184,6 +203,7 @@ function hideNoise() {
   noise.hidden = true;
   if (noise.width) noise.getContext("2d").clearRect(0, 0, noise.width, noise.height);
   paintThumb();
+  present();
 }
 
 function setName(text) {
@@ -268,6 +288,16 @@ function showLive() {
   present();
 }
 
+function stillSrc(item) {
+  if (!item) return "";
+  if (item.url) return item.url;
+  if (item.png) {
+    item.url = URL.createObjectURL(item.png);
+    return item.url;
+  }
+  return "";
+}
+
 function showStill(item) {
   const pic = item || images.find((it) => it.id === selectedId) || images[0];
   if (!pic) {
@@ -278,7 +308,7 @@ function showStill(item) {
   showing = "still";
   const still = $("still");
   still.onload = () => present();
-  still.src = pic.jpeg;
+  still.src = stillSrc(pic);
   still.alt = pic.name || "";
   setAspect(pic.w || 320, pic.h || 256);
   setName(pic.name || "");
@@ -327,7 +357,8 @@ function renderTimeline() {
     btn.dataset.id = String(item.id);
     btn.setAttribute("aria-pressed", "false");
     const img = document.createElement("img");
-    img.src = item.jpeg;
+    const src = stillSrc(item);
+    if (src) img.src = src;
     img.alt = item.name || "";
     if (item.w && item.h) btn.style.aspectRatio = `${item.w} / ${item.h}`;
     btn.append(img);
@@ -346,10 +377,12 @@ function tick(parent, frac, text, edge) {
 }
 
 function renderHours(guide, span) {
-  const lanes = lanesInSpan(guide.days, span.start, span.end);
-  const duration = span.end - span.start;
-  const split = lanes.length > 1;
-  $("call-spacer").hidden = !split;
+  const duration = Math.max(1, span.end - span.start);
+  const clusters = layoutInSpan(guide.blocks, span.start, span.end);
+  const blocks = clusters.flatMap((c) => c.blocks);
+  const maxLanes = Math.max(1, ...clusters.map((c) => c.lanes.length));
+  const mixed = new Set(blocks.map((b) => b.call).filter(Boolean)).size > 1;
+
   const axis = $("axis");
   axis.replaceChildren();
   tick(axis, 0, clock(span.start), "start");
@@ -376,32 +409,25 @@ function renderHours(guide, span) {
 
   const root = $("lanes");
   root.replaceChildren();
-  const rows = lanes.length ? lanes : [{ call: "", blocks: [] }];
-  const mixed = !split && new Set(rows[0].blocks.map((b) => b.call).filter(Boolean)).size > 1;
-  for (const lane of rows) {
-    const row = document.createElement("div");
-    row.className = "lane";
-    if (split) {
-      const call = document.createElement("div");
-      call.className = "call";
-      call.textContent = lane.call || "";
-      row.append(call);
-    }
-    const track = document.createElement("div");
-    track.className = "track";
-    for (const b of lane.blocks) {
-      const el = document.createElement("div");
-      el.className = "block";
-      const left = Math.max(0, (b.start - span.start) / duration);
-      const size = Math.max(0, (b.end - b.start) / duration);
-      el.style.left = `${left * 100}%`;
-      el.style.width = `${size * 100}%`;
-      el.textContent = mixed && b.call ? `${b.name} · ${b.call}` : b.name;
-      track.append(el);
-    }
-    row.append(track);
-    root.append(row);
+  const track = document.createElement("div");
+  track.className = "track hour-track";
+  track.style.height = `${Math.round(maxLanes * 1.35 * 10) / 10}rem`;
+  for (const b of blocks) {
+    const el = document.createElement("div");
+    el.className = "block";
+    const left = Math.max(0, (b.start - span.start) / duration);
+    const size = Math.max(0, (b.end - b.start) / duration);
+    el.style.left = `${left * 100}%`;
+    el.style.width = `${size * 100}%`;
+    el.style.top = `calc(${(b.lane / b.laneCount) * 100}% + 2px)`;
+    el.style.height = `calc(${(1 / b.laneCount) * 100}% - 4px)`;
+    const label = document.createElement("span");
+    label.textContent = mixed && b.call ? `${b.name} · ${b.call}` : b.name;
+    el.append(label);
+    el.title = `${b.name}${b.call ? ` · ${b.call}` : ""} · ${clockRange(b.startMs, b.endMs)}`;
+    track.append(el);
   }
+  root.append(track);
   drawMarks(span);
 }
 
@@ -414,9 +440,16 @@ function drawMarks(span) {
   host.append(now);
   for (const item of images) {
     if (!(item.at >= span.start && item.at <= span.end)) continue;
-    const line = document.createElement("div");
+    const line = document.createElement("button");
+    line.type = "button";
     line.className = "rx-line";
     line.dataset.at = String(item.at);
+    line.title = `${item.name || "Picture"} · ${clock(item.at)}`;
+    line.setAttribute(
+      "aria-label",
+      `Open ${item.name || "picture"} received at ${clock(item.at)}`,
+    );
+    line.addEventListener("click", () => showStill(item));
     host.append(line);
   }
   placeMarks();
@@ -451,48 +484,38 @@ function renderCalendar(guide) {
     const h = document.createElement("h3");
     h.textContent = `${WD[day.date.getDay()]} ${day.date.getDate()}`;
     card.append(h);
-    const split = document.createElement("div");
-    split.className = "split";
-    const several = day.columns.length > 1;
-    for (const col of day.columns) {
-      const column = document.createElement("div");
-      column.className = "col";
-      if (several) {
-        const call = document.createElement("p");
-        call.className = "col-call";
-        call.textContent = col.call || "";
-        column.append(call);
+    const inner = document.createElement("div");
+    inner.className = "day-body";
+    const clusters = layoutBlocks(day.blocks.map((b) => ({ ...b })));
+    for (const cluster of clusters) {
+      const wrap = document.createElement("div");
+      wrap.className = cluster.lanes.length > 1 ? "cluster split" : "cluster";
+      for (const lane of cluster.lanes) {
+        const column = document.createElement("div");
+        column.className = "col";
+        for (const b of lane) {
+          const prog = document.createElement("p");
+          prog.className = "prog";
+          const time = document.createElement("time");
+          time.textContent = `${hhmm(b.start)}–${hhmm(b.end)}`;
+          prog.append(time);
+          prog.append(document.createTextNode(b.name));
+          if (b.call) {
+            const call = document.createElement("span");
+            call.className = "prog-call";
+            call.textContent = b.call;
+            prog.append(call);
+          }
+          column.append(prog);
+        }
+        wrap.append(column);
       }
-      for (const b of col.blocks) {
-        const prog = document.createElement("p");
-        prog.className = "prog";
-        const time = document.createElement("time");
-        time.textContent = `${hhmm(b.start)}–${hhmm(b.end)}`;
-        prog.append(time);
-        prog.append(document.createTextNode(b.name));
-        column.append(prog);
-      }
-      split.append(column);
+      inner.append(wrap);
     }
-    card.append(split);
+    card.append(inner);
     days.append(card);
   }
   body.append(days);
-  if (guide.undated.length) {
-    const extra = document.createElement("section");
-    extra.className = "undated";
-    const h = document.createElement("h3");
-    h.textContent = "Undated";
-    extra.append(h);
-    const list = document.createElement("ul");
-    for (const item of guide.undated) {
-      const li = document.createElement("li");
-      li.textContent = `${item.call} · ${item.name} · ${item.range}`;
-      list.append(li);
-    }
-    extra.append(list);
-    body.append(extra);
-  }
 }
 
 function renderGuide() {
@@ -501,20 +524,77 @@ function renderGuide() {
   pinned = extendSpan(now, guide.end, guide.start, pinned);
   renderHours(guide, pinned);
   if ($("calendar").open) renderCalendar(guide);
+  updateClock();
 }
 
-function snapshot(canvas) {
-  const copy = document.createElement("canvas");
-  copy.width = canvas.width;
-  copy.height = canvas.height;
-  copy.getContext("2d").drawImage(canvas, 0, 0);
-  return copy.toDataURL("image/jpeg", 0.85);
+function pngOfVisor() {
+  if (showing === "still" && $("still").src) {
+    const img = $("still");
+    const c = document.createElement("canvas");
+    c.width = img.naturalWidth || images[0]?.w || 320;
+    c.height = img.naturalHeight || images[0]?.h || 256;
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    return c.toDataURL("image/png");
+  }
+  return $("live").toDataURL("image/png");
+}
+
+function pngBlob(rgba, w, h) {
+  return new Promise((resolve, reject) => {
+    const c = document.createElement("canvas");
+    c.width = w;
+    c.height = h;
+    c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
+    c.toBlob(
+      (blob) => (blob ? resolve(blob) : reject(new Error("Could not encode the picture"))),
+      "image/png",
+    );
+  });
+}
+
+async function finishReception(ev) {
+  const my = rxSeq;
+  receivingPicture = false;
+  // Hold the finished frame while the lossless copy is encoded and written,
+  // so the live noise does not paint over it in the meantime.
+  heldPicture = true;
+  hideNoise();
+  const at = Date.now();
+  let png;
+  try {
+    png = await pngBlob(ev.rgba, ev.width, ev.height);
+  } catch (err) {
+    fail(err);
+    return;
+  }
+  const item = {
+    id: `${at}-${++imageSeq}`,
+    png,
+    name: ev.name || liveName || "",
+    w: ev.width,
+    h: ev.height,
+    mode: ev.mode || "",
+    call: ev.call || "",
+    at,
+  };
+  try {
+    images = await rememberImage(item);
+  } catch (err) {
+    fail(err);
+    item.url = URL.createObjectURL(png);
+    images = [item, ...images].slice(0, 40);
+  }
+  renderTimeline();
+  renderGuide();
+  if (my !== rxSeq) return;
+  const shown = images.find((it) => it.id === item.id) || images[0];
+  if (shown) showStill(shown);
 }
 
 function onEvent(ev) {
   if (ev.type === "info") {
     guideState = ingest(guideState, ev.packet, new Date());
-    saveGuide(guideState);
+    void saveGuide(guideState).catch((err) => fail(err));
     renderGuide();
     return;
   }
@@ -524,11 +604,10 @@ function onEvent(ev) {
     return;
   }
   if (ev.type === "rx") {
+    rxSeq++;
     heldPicture = false;
-    recoveredLive = false;
     receivingPicture = true;
     liveName = ev.name || liveName;
-    liveRecovery = { mode: ev.mode || "", call: ev.call || "", stamp: ev.stamp || "", at: Date.now() };
     const live = $("live");
     live.width = ev.width;
     live.height = ev.height;
@@ -542,7 +621,6 @@ function onEvent(ev) {
     return;
   }
   if (ev.type === "rows") {
-    if (recoveredLive) return;
     revealedRow = Math.max(revealedRow, ev.y + ev.count);
     const data = new Uint8ClampedArray(ev.rgba);
     $("live").getContext("2d").putImageData(new ImageData(data, ev.width, ev.count), 0, ev.y);
@@ -553,38 +631,19 @@ function onEvent(ev) {
     return;
   }
   if (ev.type === "rx-end") {
-    receivingPicture = false;
-    heldPicture = false;
-    const item = {
-      id: Date.now(),
-      jpeg: snapshot($("live")),
-      name: ev.name || liveName || "",
-      w: ev.width,
-      h: ev.height,
-      mode: ev.mode,
-      call: ev.call || liveRecovery.call || "",
-      stamp: ev.stamp || liveRecovery.stamp || "",
-      at: Date.now(),
-    };
-    liveRecovery = { mode: item.mode || "", call: item.call, stamp: item.stamp, at: item.at };
-    recoveredLive = false;
-    images = rememberImage(item);
-    renderTimeline();
-    showStill();
-    renderGuide();
-    startNoise();
+    void finishReception(ev);
   }
 }
 
 function saveCurrentPrefs() {
-  savePrefs({
+  void savePrefs({
     device: $("device").value,
     channel: channelMode,
     gain: Number($("gain").value),
     mode: $("mode").value,
     theme,
     scale: scaleMode,
-  });
+  }).catch((err) => fail(err));
 }
 
 function resetVu() {
@@ -776,112 +835,6 @@ function stop() {
   shutdown();
 }
 
-function recoveryTarget() {
-  if (showing === "still") {
-    const pic = images.find((it) => it.id === selectedId) || images[0];
-    if (!pic) return null;
-    return { mode: pic.mode || "", call: pic.call || "", stamp: pic.stamp || "", at: pic.at || Date.now(), id: pic.id };
-  }
-  return { mode: liveRecovery.mode, call: liveRecovery.call, stamp: liveRecovery.stamp, at: liveRecovery.at || Date.now(), id: null };
-}
-
-function loadBlob(blob) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(blob);
-    const img = new Image();
-    img.onload = () => {
-      URL.revokeObjectURL(url);
-      resolve(img);
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      reject(new Error("The recovery file is not a picture"));
-    };
-    img.src = url;
-  });
-}
-
-function jpegOf(img) {
-  const c = document.createElement("canvas");
-  c.width = img.width;
-  c.height = img.height;
-  c.getContext("2d").drawImage(img, 0, 0);
-  return c.toDataURL("image/jpeg", 0.85);
-}
-
-function showRecovered(img, target) {
-  if (showing === "live" || target.id == null) {
-    const live = $("live");
-    live.width = img.width;
-    live.height = img.height;
-    live.getContext("2d").drawImage(img, 0, 0);
-    heldPicture = true;
-    recoveredLive = true;
-    stopNoise();
-    setAspect(img.width, img.height);
-    paintThumb();
-    present();
-    return;
-  }
-  const jpeg = jpegOf(img);
-  const i = images.findIndex((it) => it.id === target.id);
-  if (i >= 0) {
-    images[i] = { ...images[i], jpeg, w: img.width, h: img.height };
-    images = saveImages(images);
-    renderTimeline();
-    showStill(images.find((it) => it.id === target.id) || images[i]);
-  }
-}
-
-async function recoverPicture() {
-  const btn = $("dgt");
-  const target = recoveryTarget();
-  if (!target || target.mode !== "YQ") {
-    fail(new Error("DGT YQ replaces a YoniQ picture"));
-    return;
-  }
-  if (!target.call) {
-    fail(new Error("The callsign has not been heard"));
-    return;
-  }
-  btn.disabled = true;
-  clearErr();
-  try {
-    let res;
-    if (target.stamp) {
-      const name = remoteName(target.call, target.stamp);
-      if (!name) throw new Error("The callsign cannot name a recovery file");
-      res = await fetch("/dgt/file/" + encodeURIComponent(name));
-    } else {
-      const names = searchNames(target.call, target.at, 240);
-      if (!names.length) throw new Error("The callsign cannot name a recovery file");
-      res = await fetch("/dgt/find", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ names }),
-      });
-    }
-    if (!res.ok) throw new Error("No recovery picture for this callsign");
-    showRecovered(await loadBlob(await res.blob()), target);
-  } catch (err) {
-    fail(err instanceof Error ? err : new Error("Recovery failed"));
-  } finally {
-    btn.disabled = false;
-  }
-}
-
-function pngOfVisor() {
-  if (showing === "still" && $("still").src) {
-    const img = $("still");
-    const c = document.createElement("canvas");
-    c.width = img.naturalWidth || images[0]?.w || 320;
-    c.height = img.naturalHeight || images[0]?.h || 256;
-    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
-    return c.toDataURL("image/png");
-  }
-  return $("live").toDataURL("image/png");
-}
-
 function initControls() {
   const bar = $("vu-bar");
   for (let i = 0; i < 16; i++) bar.append(document.createElement("i"));
@@ -941,11 +894,8 @@ function initControls() {
   $("save").addEventListener("click", () => {
     const a = document.createElement("a");
     a.href = pngOfVisor();
-    a.download = "estivi.png";
+    a.download = "estivi-rx.png";
     a.click();
-  });
-  $("dgt").addEventListener("click", () => {
-    recoverPicture();
   });
   $("full").addEventListener("click", () => {
     const pic = $("picture");
@@ -953,12 +903,32 @@ function initControls() {
     else pic.requestFullscreen();
   });
   $("reset").addEventListener("click", () => showLive());
-  $("clear").addEventListener("click", () => {
-    clearImages();
+  $("clear").addEventListener("click", async () => {
+    if (!window.confirm("Delete every saved picture? This cannot be undone.")) return;
+    try {
+      await clearImages();
+    } catch (err) {
+      fail(err);
+      return;
+    }
+    for (const item of images) if (item.url) URL.revokeObjectURL(item.url);
     images = [];
     renderTimeline();
     renderGuide();
     if (showing === "still") showLive();
+  });
+  $("clear-cal").addEventListener("click", async () => {
+    if (!window.confirm("Delete every program from the calendar? This cannot be undone.")) return;
+    try {
+      await clearGuide();
+    } catch (err) {
+      fail(err);
+      return;
+    }
+    guideState = { stations: {} };
+    pinned = null;
+    renderGuide();
+    if ($("calendar").open) renderCalendar(buildGuide(guideState, new Date()));
   });
   $("cal").addEventListener("click", () => {
     renderCalendar(buildGuide(guideState, new Date()));
@@ -970,7 +940,28 @@ function initControls() {
   });
 }
 
-function boot() {
+async function boot() {
+  try {
+    prefs = await loadPrefs();
+  } catch (err) {
+    fail(err);
+  }
+  try {
+    guideState = await loadGuide();
+  } catch (err) {
+    fail(err);
+  }
+  try {
+    images = await loadImages();
+  } catch (err) {
+    fail(err);
+  }
+
+  channelMode = prefs.channel === "left" || prefs.channel === "right" ? prefs.channel : "mono";
+  theme = prefs.theme === "light" ? "light" : "dark";
+  scaleMode = prefs.scale === "bicubic" ? "bicubic" : "neighbor";
+  showing = images.length ? "still" : "live";
+
   applyTheme(theme);
   applyScale();
   initControls();
@@ -980,7 +971,9 @@ function boot() {
   fitPicture();
   startNoise();
   renderGuide();
+  updateClock();
   setInterval(renderGuide, 20000);
+  setInterval(updateClock, 1000);
   setInterval(() => {
     if (pinned && Date.now() >= pinned.end) renderGuide();
     else placeMarks();
