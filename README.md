@@ -8,13 +8,21 @@ Open it with:
 docker compose up --build
 ```
 
-Then go to http://localhost:8080. The page asks for the microphone and starts receiving on its own. A denied permission on that automatic start stays quiet; pressing Start receiving shows the error.
+Then go to http://localhost:8086. The page asks for the microphone and starts receiving on its own. A denied permission on that automatic start stays quiet; pressing Start receiving shows the error.
 
 Decoder checks, with no microphone:
 
 ```sh
 npm test
 ```
+
+To leave it running on the server:
+
+```sh
+docker compose up -d --build
+```
+
+The container restarts unless it is stopped by hand. It serves HTTP on host port 8086; put your existing nginx in front for TLS and headers. Browsers only expose the microphone on HTTPS or localhost.
 
 ## The page
 
@@ -65,7 +73,7 @@ Only the analog YoniQ mode is decoded. The former DGT YQ clean-copy button, its 
 
 ## Files
 
-`www/` is the page. `Dockerfile` and `nginx.conf` serve that directory on port 8080 and send `no-cache` for HTML, JS, and CSS. `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, and the guide. Those tests are not copied into the image.
+`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS, and CSS. `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, and the guide. Those tests are not copied into the image.
 
 Everything the page remembers is in IndexedDB under the database name `estivi rx`: the pictures as lossless PNG blobs, newest first and capped at 40, plus the guide and the preferences. Clearing the pictures does not clear the guide, and clearing the guide does not touch the pictures.
 
