@@ -1,6 +1,6 @@
 import { Engine } from "./engine.js";
 import { detectLocale, getLocale, setLocale, t } from "./i18n.js";
-import { MODES, modeByShort } from "./modes.js";
+import { MODES, lossTimeoutMs, modeByShort } from "./modes.js";
 import { buildGuide, extendSpan, ingest, layoutBlocks, layoutInSpan } from "./schedule.js";
 import {
   clearGuide,
@@ -26,6 +26,8 @@ let liveName = "";
 let receivingPicture = false;
 let heldPicture = false;
 let receiving = false;
+let rxModeShort = "";
+let lastRowAt = 0;
 let engine = null;
 let audio = null;
 let seq = 0;
@@ -46,6 +48,11 @@ let noiseTimer = 0;
 let noiseFrames = [];
 let noiseFrame = 0;
 let noiseSize = "";
+
+// Reset gives up on the picture being received only once the signal has been
+// gone for this share of the mode's lost-signal window. Before that the click
+// just changes the view, so a stray press cannot cut a live picture.
+const RESET_ABORT_SHARE = 0.3;
 
 function dbToGain(v) {
   return 10 ** (Number(v) / 20);
@@ -122,7 +129,6 @@ function fitPicture() {
     pic.style.width = "100%";
     pic.style.height = "auto";
     if (bar) bar.style.width = "100%";
-    present();
     return;
   }
   const sw = stage.clientWidth;
@@ -137,7 +143,6 @@ function fitPicture() {
   pic.style.width = `${Math.floor(w)}px`;
   pic.style.height = `${Math.floor(h)}px`;
   if (bar) bar.style.width = `${Math.floor(w)}px`;
-  present();
 }
 
 function makeNoiseFrame(w, h) {
@@ -182,7 +187,6 @@ function paintNoise() {
   ctx.clearRect(0, 0, noise.width, noise.height);
   ctx.drawImage(frame, 0, y0, live.width, y1 - y0, 0, y0, live.width, y1 - y0);
   paintThumb();
-  present();
 }
 
 function startNoise() {
@@ -207,7 +211,6 @@ function hideNoise() {
   noise.hidden = true;
   if (noise.width) noise.getContext("2d").clearRect(0, 0, noise.width, noise.height);
   paintThumb();
-  present();
 }
 
 function setName(text) {
@@ -222,7 +225,6 @@ function applyScale() {
   btn.title = t("scale.title");
   btn.setAttribute("aria-label", t("scale.title"));
   btn.setAttribute("aria-pressed", scaleMode === "bicubic" ? "true" : "false");
-  present();
 }
 
 function paintRun() {
@@ -245,38 +247,6 @@ function applyLanguage() {
   if (!$("err").hidden && lastError) $("err").textContent = describeError(lastError);
 }
 
-function present() {
-  const scale = $("scale");
-  const pic = $("picture");
-  if (!scale || !pic) return;
-  if (scaleMode !== "bicubic") {
-    scale.hidden = true;
-    return;
-  }
-  const dpr = window.devicePixelRatio || 1;
-  const w = Math.max(1, Math.round(pic.clientWidth * dpr));
-  const h = Math.max(1, Math.round(pic.clientHeight * dpr));
-  if (scale.width !== w || scale.height !== h) {
-    scale.width = w;
-    scale.height = h;
-  }
-  scale.hidden = false;
-  const ctx = scale.getContext("2d");
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = "high";
-  ctx.fillStyle = "#000000";
-  ctx.fillRect(0, 0, w, h);
-  const still = $("still");
-  if (showing === "still" && still.complete && still.naturalWidth) {
-    ctx.drawImage(still, 0, 0, w, h);
-    return;
-  }
-  const live = $("live");
-  if (live.width) ctx.drawImage(live, 0, 0, w, h);
-  const noise = $("noise");
-  if (!heldPicture && noise && !noise.hidden && noise.width) ctx.drawImage(noise, 0, 0, w, h);
-}
-
 function reveal() {
   const live = $("live");
   const still = $("still");
@@ -286,8 +256,27 @@ function reveal() {
 
 function applyIdleAspect() {
   if (showing !== "live" || receivingPicture) return;
+  if (heldPicture) {
+    // A picture stopped halfway keeps its own shape until Reset.
+    const live = $("live");
+    setAspect(live.width, live.height);
+    return;
+  }
   const m = selectedMode();
-  setAspect(m ? m.w : 320, m ? m.h : 256);
+  const w = m ? m.w : 320;
+  const h = m ? m.h : 256;
+  setAspect(w, h);
+  // The box is 320x256 when nothing is arriving, so a canvas left at the last
+  // mode's size (Robot is 320x240) would letterbox the grain inside it.
+  const live = $("live");
+  if (live.width !== w || live.height !== h) {
+    live.width = w;
+    live.height = h;
+  }
+  const ctx = live.getContext("2d");
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, w, h);
+  startNoise();
 }
 
 function markSelection() {
@@ -305,6 +294,7 @@ function showLive() {
   showing = "live";
   selectedId = null;
   $("delete").hidden = true;
+  if (!receivingPicture) heldPicture = false;
   reveal();
   if (receivingPicture) {
     const live = $("live");
@@ -312,7 +302,12 @@ function showLive() {
   } else applyIdleAspect();
   setName(liveName);
   markSelection();
-  present();
+}
+
+function stalledLongEnough() {
+  const mode = modeByShort(rxModeShort);
+  if (!mode) return false;
+  return performance.now() - lastRowAt >= lossTimeoutMs(mode) * RESET_ABORT_SHARE;
 }
 
 function stillSrc(item) {
@@ -335,14 +330,12 @@ function showStill(item) {
   showing = "still";
   $("delete").hidden = false;
   const still = $("still");
-  still.onload = () => present();
   still.src = stillSrc(pic);
   still.alt = pic.name || t("picture.one");
   setAspect(pic.w || 320, pic.h || 256);
   setName(pic.name || "");
   reveal();
   markSelection();
-  present();
 }
 
 function paintThumb() {
@@ -507,6 +500,7 @@ function renderCalendar(guide) {
   const days = document.createElement("div");
   days.className = "days";
   for (const day of guide.days) {
+    if (!day.blocks.length) continue;
     const card = document.createElement("section");
     card.className = "day";
     const h = document.createElement("h3");
@@ -630,6 +624,10 @@ async function finishReception(ev) {
   }
   const shown = images.find((it) => it.id === item.id) || images[0];
   if (shown) showStill(shown);
+  // The finished picture keeps the visor, but the decoder is live again:
+  // release the hold and let the live slot animate its grain.
+  heldPicture = false;
+  startNoise();
 }
 
 function onEvent(ev) {
@@ -648,6 +646,8 @@ function onEvent(ev) {
     rxSeq++;
     heldPicture = false;
     receivingPicture = true;
+    rxModeShort = ev.mode || "";
+    lastRowAt = performance.now();
     if (ev.mode && ev.mode !== lastMode) {
       lastMode = ev.mode;
       saveCurrentPrefs();
@@ -666,13 +666,13 @@ function onEvent(ev) {
     return;
   }
   if (ev.type === "rows") {
+    lastRowAt = performance.now();
     revealedRow = Math.max(revealedRow, ev.y + ev.count);
     const data = new Uint8ClampedArray(ev.rgba);
     $("live").getContext("2d").putImageData(new ImageData(data, ev.width, ev.count), 0, ev.y);
     const noise = $("noise");
     if (noise.width) noise.getContext("2d").clearRect(0, 0, noise.width, revealedRow);
     paintThumb();
-    present();
     return;
   }
   if (ev.type === "rx-end") {
@@ -1010,7 +1010,12 @@ function initControls() {
     if (document.fullscreenElement) document.exitFullscreen();
     else pic.requestFullscreen();
   });
-  $("reset").addEventListener("click", () => showLive());
+  $("reset").addEventListener("click", () => {
+    // Once the signal has been gone long enough, Reset gives up on the
+    // partial picture instead of waiting out the whole loss window.
+    if (receivingPicture && engine && stalledLongEnough()) engine.abortPicture();
+    showLive();
+  });
   $("clear").addEventListener("click", async () => {
     if (!window.confirm(t("confirm.clearImages"))) return;
     try {
@@ -1095,7 +1100,6 @@ async function boot() {
   });
   new ResizeObserver(() => fitPicture()).observe($("stage"));
   requestAnimationFrame(() => requestAnimationFrame(() => fitPicture()));
-  document.addEventListener("fullscreenchange", () => requestAnimationFrame(() => present()));
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       stopNoise();

@@ -316,6 +316,29 @@ test("a short loss resumes the picture at its true row", () => {
   checkBars(mode, row.rgba, 0, 16);
 });
 
+test("a second loss after a resume gets a fresh timeout window", () => {
+  const fs = 48000;
+  const mode = modeByShort("BW8");
+  const gap = 10 * lineMs(mode);
+  // The two gaps are 40 lines apart, longer than the 36-line timeout, so a
+  // timer left over from the first loss would end this picture on the spot.
+  const segs = [
+    { hz: 0, ms: 250 },
+    ...visSegments(mode),
+    ...pictureSegments(mode, bars(mode.w), 0, 20),
+    { hz: BLACK_HZ, ms: gap },
+    ...pictureSegments(mode, bars(mode.w), 30, 30),
+    { hz: BLACK_HZ, ms: gap },
+    ...pictureSegments(mode, bars(mode.w), 70, 10),
+    { hz: 0, ms: 500 },
+  ];
+  const { ev, eng } = run(fs, segs, { rows: true, settle: false });
+  assert.equal(ev.find((e) => e.type === "rx-end"), undefined, "second loss ended the picture early");
+  const row = ev.find((e) => e.type === "rows" && e.y === 70);
+  assert.ok(row, `row 70 missing: phase=${eng.sstv.phase} line=${eng.sstv.line}`);
+  checkBars(mode, row.rgba, 0, 16);
+});
+
 test("a long loss ends the partial picture and flags it", () => {
   const fs = 48000;
   const mode = modeByShort("BW8");
@@ -332,6 +355,25 @@ test("a long loss ends the partial picture and flags it", () => {
   assert.equal(end.complete, false);
   assert.ok(end.lines >= 5, `only ${end.lines} lines`);
   checkBars(mode, end.rgba, 0, 16);
+});
+
+test("aborting a picture in progress saves it as lost", () => {
+  const fs = 48000;
+  const mode = modeByShort("BW8");
+  const segs = [
+    { hz: 0, ms: 250 },
+    ...visSegments(mode),
+    ...pictureSegments(mode, bars(mode.w), 0, 12),
+  ];
+  const { ev, eng } = run(fs, segs, { rows: true, settle: false });
+  assert.ok(ev.find((e) => e.type === "rx"), "picture did not start");
+  assert.equal(eng.sstv.abort(), true);
+  const end = ev.find((e) => e.type === "rx-end");
+  assert.ok(end, `no abort end: phase=${eng.sstv.phase}`);
+  assert.equal(end.lost, true);
+  assert.equal(end.complete, false);
+  checkBars(mode, end.rgba, 0, 16);
+  assert.equal(eng.sstv.abort(), false, "second abort was not a no-op");
 });
 
 test("a VIS during a loss ends the partial picture and starts the next one", () => {
@@ -353,6 +395,48 @@ test("a VIS during a loss ends the partial picture and starts the next one", () 
   assert.equal(ends[0].lost, true);
   assert.equal(rxs.length, 2, `rxs=${rxs.length}`);
   assert.ok(ev.indexOf(ends[0]) < ev.indexOf(rxs[1]), "new picture did not follow the partial");
+});
+
+test("bright picture rows in a hold are not mistaken for a new VIS", () => {
+  const fs = 48000;
+  const mode = modeByShort("R12");
+  const segs = [
+    { hz: 0, ms: 250 },
+    ...visSegments(mode),
+    ...pictureSegments(mode, bars(mode.w), 0, 6),
+    // Two sync-less lines put the decoder in hold, then the picture keeps
+    // going: a bright leader-length run, a short sync, another run, a sync.
+    { hz: 1900, ms: 260 },
+    { hz: 1900, ms: 250 },
+    { hz: 1200, ms: 8 },
+    { hz: 1900, ms: 250 },
+    { hz: 1200, ms: 8 },
+    { hz: 1900, ms: 400 },
+    { hz: 0, ms: 300 },
+  ];
+  const { ev, eng } = run(fs, segs, { rows: true, settle: false });
+  assert.ok(ev.find((e) => e.type === "rx"), "picture did not start");
+  assert.equal(ev.find((e) => e.type === "rx-end"), undefined, "a false VIS chopped the picture");
+  assert.equal(eng.sstv.phase, "hold");
+});
+
+test("a mid-image picture is not chopped by bright rows that look like a VIS", () => {
+  const fs = 48000;
+  const mode = modeByShort("R12");
+  const segs = [
+    { hz: 0, ms: 250 },
+    { hz: BLACK_HZ, ms: 120 },
+    ...pictureSegments(mode, bars(mode.w), 20, 6),
+    { hz: 1900, ms: 250 },
+    { hz: 1200, ms: 8 },
+    { hz: 1900, ms: 250 },
+    { hz: 1200, ms: 8 },
+    { hz: 1900, ms: 300 },
+    { hz: 0, ms: 300 },
+  ];
+  const { ev } = run(fs, segs, { mode: "R12", rows: true, settle: false });
+  assert.ok(ev.find((e) => e.type === "rx"), "picture did not start mid-image");
+  assert.equal(ev.find((e) => e.type === "rx-end"), undefined, "a false VIS chopped the picture");
 });
 
 test("Scottie and Robot modes also start a picture mid-image", () => {

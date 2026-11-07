@@ -41,6 +41,10 @@ export class Engine {
     this.sstv.setLastMode(short ? modeByShort(short) : null);
   }
 
+  abortPicture() {
+    return this.sstv.abort();
+  }
+
   push(samples) {
     let energy = 0;
     for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];

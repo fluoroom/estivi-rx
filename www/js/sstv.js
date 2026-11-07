@@ -229,6 +229,8 @@ export class Sstv {
     this.lostLine = 0;
     this.lostExpect = 0;
     this.lossSamples = 0;
+    this.visEdge = 0;
+    this.visResume = "hold";
   }
 
   setForced(mode) {
@@ -245,6 +247,14 @@ export class Sstv {
     this.midHunter = null;
   }
 
+  // Give up on the picture being received now. Emits rx-end(lost), so the
+  // partial keeps its place in the timeline exactly like a timeout.
+  abort() {
+    if (!this.started) return false;
+    this.finish(false, true);
+    return true;
+  }
+
   samp(ms) {
     return (ms * this.fs) / 1000;
   }
@@ -259,10 +269,11 @@ export class Sstv {
     if (this.startedMid && (this.phase === "body" || this.phase === "seek" || this.phase === "scottie")) {
       const edge = this.hunter.push(i, f);
       if (edge != null) {
-        // A new picture replaces this partial one. Save it and go live.
-        this.finish(false, true);
+        // A new picture may replace this partial one, but bright rows and
+        // their line sync look like a header too. Check it before saving.
         this.visEdge = edge;
-        this.phase = "vis";
+        this.visResume = this.phase;
+        this.phase = "vischeck";
         return;
       }
     }
@@ -296,6 +307,7 @@ export class Sstv {
   pumpOne() {
     if (this.phase === "hunt") return false;
     if (this.phase === "vis") return this.pumpVis();
+    if (this.phase === "vischeck") return this.pumpVisCheck();
     if (this.phase === "lock") return this.pumpLock();
     if (this.phase === "body") return this.pumpBody();
     if (this.phase === "seek") return this.pumpSeek();
@@ -306,13 +318,22 @@ export class Sstv {
 
   pumpVis() {
     if (this.ring.n < this.visEdge + this.samp(308)) return false;
-    const got = this.readVis(this.visEdge);
-    if (!got) return this.giveUp();
-    const fromVis = modeByVis(got.code);
-    let mode = null;
-    if (this.forced) mode = this.forced;
-    else if (fromVis && parityMatches(fromVis, got.code, got.parity)) mode = fromVis;
+    const mode = this.visModeAt(this.visEdge);
     if (!mode) return this.giveUp();
+    this.beginVis(mode, this.visEdge);
+    return true;
+  }
+
+  visModeAt(edge) {
+    const got = this.readVis(edge);
+    if (!got) return null;
+    const fromVis = modeByVis(got.code);
+    if (this.forced) return this.forced;
+    if (fromVis && parityMatches(fromVis, got.code, got.parity)) return fromVis;
+    return null;
+  }
+
+  beginVis(mode, edge) {
     this.mode = mode;
     this.lastMode = mode;
     this.line = 0;
@@ -328,8 +349,30 @@ export class Sstv {
     this.syncEnd = null;
     this.midMode = null;
     this.midHunter = null;
-    this.visEnd = this.visEdge + this.samp(300);
+    this.visEnd = edge + this.samp(300);
     this.phase = "lock";
+  }
+
+  // A VIS may be starting, in a hold or in the middle of a mid-image
+  // picture. Bright picture rows followed by their line sync look exactly
+  // like a leader and break, so read the header before throwing the current
+  // picture away; if it is not a real VIS, resume where we left off.
+  pumpVisCheck() {
+    if (this.ring.n < this.visEdge + this.samp(308)) return false;
+    const mode = this.visModeAt(this.visEdge);
+    if (!mode) {
+      // Not a header. Go back to the phase that was running, with the
+      // picture and its clock untouched.
+      this.hunter.reset();
+      if (this.visResume === "hold") {
+        this.syncHunter = new SyncHunter(this.fs, this.mode);
+        this.miss = 0;
+      }
+      this.phase = this.visResume;
+      return true;
+    }
+    this.finish(false, true);
+    this.beginVis(mode, this.visEdge);
     return true;
   }
 
@@ -403,7 +446,8 @@ export class Sstv {
     if (!mode) return this.giveUp();
     this.phase = "hold";
     // Time the lost picture from the first missing sync, not from the point
-    // where the decoder has given up on it.
+    // where the decoder has given up on it. Every hold arms its own window,
+    // so a loss that resumes never shortens the next one.
     this.lostAt = expect;
     this.lostLine = this.line;
     this.lostExpect = expect;
@@ -417,11 +461,11 @@ export class Sstv {
   pumpHold(i, f) {
     const edge = this.hunter.push(i, f);
     if (edge != null) {
-      // A new picture arrived while this one was lost. Save what was heard
-      // and let the visor go back to live for the new one.
-      this.finish(false, true);
+      // Check the header before saving: bright picture content can pass for
+      // a leader and break, and a partial must survive that.
       this.visEdge = edge;
-      this.phase = "vis";
+      this.visResume = "hold";
+      this.phase = "vischeck";
       return;
     }
     const found = this.syncHunter ? this.syncHunter.push(i, f) : null;
