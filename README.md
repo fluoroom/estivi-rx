@@ -30,7 +30,7 @@ The header is the title, a local clock with seconds and a small UTC clock with s
 
 The visor is the picture. Its shape follows the mode that is decoding. With nothing arriving it is 320×256. The picture is scaled to fit the window, and the whole frame stays visible. Under it, still outside the picture: the program or image name, the resize style button (Blur / Pixels), Save, Delete, Fullscreen, and Reset. Delete is there only for a saved picture, and it asks before removing that one picture. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
 
-Blur is the default. It smooths the received picture up to the visor size. Pixels keeps each received pixel a hard block. The button names the mode you get if you click it (Pixels while Blur is on, Blur while Pixels is on); hovering it says Resize style. Timeline thumbnails stay sharp pixels either way. Save writes the received pixels as a lossless PNG and does not include the grain or the enlargement.
+Blur is the default. It smooths the received picture up to the visor size. Pixels keeps each received pixel a hard block. The button names the mode you get if you click it (Pixels while Blur is on, Blur while Pixels is on); hovering it says Resize style. Timeline thumbnails stay sharp pixels either way. Save writes the received pixels as a lossless PNG named `estivi-rx-YY-MM-DD-HH-mm-MODE.png`, using the save time and the picture's mode short code, and does not include the grain or the enlargement.
 
 Grain is only on the live view. It fills the visor when nothing is arriving, and it fills the rows that have not been revealed yet while a picture is coming in. A finished picture, a picture stopped halfway, a saved thumbnail, and the Save file have none.
 

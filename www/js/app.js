@@ -561,6 +561,24 @@ function pngOfVisor() {
   return $("live").toDataURL("image/png");
 }
 
+function saveStamp(d) {
+  return [
+    String(d.getFullYear() % 100).padStart(2, "0"),
+    two(d.getMonth() + 1),
+    two(d.getDate()),
+    two(d.getHours()),
+    two(d.getMinutes()),
+  ].join("-");
+}
+
+function saveMode() {
+  if (showing === "still") {
+    const pic = images.find((it) => it.id === selectedId) || images[0];
+    if (pic && pic.mode) return pic.mode;
+  }
+  return lastMode || "auto";
+}
+
 function pngBlob(rgba, w, h) {
   return new Promise((resolve, reject) => {
     const c = document.createElement("canvas");
@@ -981,7 +999,7 @@ function initControls() {
   $("save").addEventListener("click", () => {
     const a = document.createElement("a");
     a.href = pngOfVisor();
-    a.download = "estivi-rx.png";
+    a.download = `estivi-rx-${saveStamp(new Date())}-${saveMode()}.png`;
     a.click();
   });
   $("delete").addEventListener("click", async () => {
