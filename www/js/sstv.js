@@ -31,14 +31,23 @@ class Ring {
   avg(a, b) {
     const i0 = Math.ceil(a);
     const i1 = Math.floor(b);
+    // Walk the buffer directly: get() repeats the bounds check and modulo for
+    // every sample, and this runs per pixel while a line is decoded.
+    const lo = Math.max(i0, 0, this.n - this.cap);
+    const hi = Math.min(i1, this.n);
+    if (hi <= lo) return NaN;
+    const buf = this.b;
+    const cap = this.cap;
+    let idx = lo % cap;
     let s = 0;
     let k = 0;
-    for (let i = i0; i < i1; i++) {
-      const v = this.get(i);
+    for (let i = lo; i < hi; i++) {
+      const v = buf[idx];
       if (v >= 900 && v <= 2700) {
         s += v;
         k++;
       }
+      idx = idx + 1 === cap ? 0 : idx + 1;
     }
     return k ? s / k : NaN;
   }

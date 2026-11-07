@@ -353,10 +353,15 @@ function paintThumb() {
   const thumb = $("thumb");
   const live = $("live");
   if (!thumb || !live.width) return;
-  thumb.width = live.width;
-  thumb.height = live.height;
+  // Assigning width/height clears the canvas, so only do it when the mode
+  // actually changed; the grain repaints this several times a second.
+  if (thumb.width !== live.width) thumb.width = live.width;
+  if (thumb.height !== live.height) thumb.height = live.height;
   const liveBtn = thumb.closest("button");
-  if (liveBtn) liveBtn.style.aspectRatio = `${live.width} / ${live.height}`;
+  if (liveBtn) {
+    const ar = `${live.width} / ${live.height}`;
+    if (liveBtn.style.aspectRatio !== ar) liveBtn.style.aspectRatio = ar;
+  }
   const ctx = thumb.getContext("2d");
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, thumb.width, thumb.height);
@@ -487,6 +492,14 @@ function drawMarks(span) {
   placeMarks();
 }
 
+let markLeft = 0;
+let markWidth = 0;
+
+function putMark(el, ms) {
+  const frac = Math.min(1, Math.max(0, (ms - pinned.start) / (pinned.end - pinned.start)));
+  el.style.left = `${markLeft + frac * markWidth}px`;
+}
+
 function placeMarks() {
   if (!pinned) return;
   const axis = $("axis");
@@ -495,14 +508,23 @@ function placeMarks() {
   const hours = axis.closest(".hours");
   const width = axis.clientWidth;
   if (width < 2) return;
-  const left = axis.getBoundingClientRect().left - hours.getBoundingClientRect().left;
-  const duration = pinned.end - pinned.start;
-  const put = (el, ms) => {
-    const frac = Math.min(1, Math.max(0, (ms - pinned.start) / duration));
-    el.style.left = `${left + frac * width}px`;
-  };
-  put(nowLine, Date.now());
-  for (const line of $("marks").querySelectorAll(".rx-line")) put(line, Number(line.dataset.at));
+  markLeft = axis.getBoundingClientRect().left - hours.getBoundingClientRect().left;
+  markWidth = width;
+  putMark(nowLine, Date.now());
+  for (const line of $("marks").querySelectorAll(".rx-line")) putMark(line, Number(line.dataset.at));
+}
+
+// The receive marks are placed once per guide render; on the one-second tick
+// only the clock line moves.
+function moveNow() {
+  if (!pinned) return;
+  const nowLine = $("now-line");
+  if (!nowLine) return;
+  if (markWidth < 2) {
+    placeMarks();
+    return;
+  }
+  putMark(nowLine, Date.now());
 }
 
 function renderCalendar(guide) {
@@ -697,8 +719,8 @@ function onEvent(ev) {
   if (ev.type === "rows") {
     lastRowAt = performance.now();
     revealedRow = Math.max(revealedRow, ev.y + ev.count);
-    const data = new Uint8ClampedArray(ev.rgba);
-    $("live").getContext("2d").putImageData(new ImageData(data, ev.width, ev.count), 0, ev.y);
+    // ev.rgba is already a Uint8ClampedArray; ImageData wraps it without a copy.
+    $("live").getContext("2d").putImageData(new ImageData(ev.rgba, ev.width, ev.count), 0, ev.y);
     const noise = $("noise");
     if (noise.width) noise.getContext("2d").clearRect(0, 0, noise.width, revealedRow);
     paintThumb();
@@ -737,7 +759,9 @@ function paintLevel(rms) {
   for (let i = 0; i < cells.length; i++) {
     cells[i].classList.toggle("on", (i + 1) / cells.length <= vu + 0.001);
   }
-  $("vu-read").textContent = db < -60 ? "—" : `${db.toFixed(0)} dB`;
+  const read = $("vu-read");
+  const text = db < -60 ? "—" : `${db.toFixed(0)} dB`;
+  if (read.textContent !== text) read.textContent = text;
 }
 
 async function loadTap(ctx) {
@@ -1122,7 +1146,7 @@ async function boot() {
   setInterval(updateClock, 1000);
   setInterval(() => {
     if (pinned && Date.now() >= pinned.end) renderGuide();
-    else placeMarks();
+    else moveNow();
   }, 1000);
   window.addEventListener("resize", () => {
     fitPicture();
