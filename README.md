@@ -16,7 +16,7 @@ A browser only gives a page the microphone over HTTPS or on localhost, so keep t
 
 Chromium browsers (Chrome, Edge, Samsung Internet) show an **Install app** button in the visor bar once the page qualifies, and the same option appears in the address bar. Installed, it opens in its own window with its own icon. On iPhone and iPad, use Share → Add to Home Screen.
 
-The page keeps a cached copy of its shell through a service worker, so it still opens when the network is away.
+The page keeps a cached copy of itself — page, scripts, fonts and icons — through a service worker, so after the first visit it still opens when the network is away.
 
 To leave it running:
 

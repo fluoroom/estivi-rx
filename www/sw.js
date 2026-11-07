@@ -1,11 +1,20 @@
 // Keeps the page shell available for an offline start. Everything still goes
 // to the network first, so a new build is picked up exactly as before.
-const CACHE = "estivi-rx-v1";
+const CACHE = "estivi-rx-v2";
 const SHELL = [
   "./",
   "./index.html",
   "./css/app.css",
   "./js/app.js",
+  "./js/ax25.js",
+  "./js/dsp.js",
+  "./js/engine.js",
+  "./js/i18n.js",
+  "./js/modes.js",
+  "./js/schedule.js",
+  "./js/sstv.js",
+  "./js/store.js",
+  "./js/tap-worklet.js",
   "./manifest.webmanifest",
   "./icons/icon-32.png",
   "./icons/icon-180.png",
