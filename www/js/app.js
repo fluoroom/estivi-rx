@@ -213,8 +213,19 @@ function hideNoise() {
   paintThumb();
 }
 
-function setName(text) {
-  $("name").textContent = text || "";
+function modeName(short) {
+  const mode = modeByShort(short);
+  return mode ? mode.name : short || "";
+}
+
+function liveModeName() {
+  const mode = selectedMode() || modeByShort(lastMode);
+  return mode ? mode.name : "";
+}
+
+function setName(text, mode) {
+  $("name-text").textContent = text || "";
+  $("name-mode").textContent = mode || "";
 }
 
 function applyScale() {
@@ -300,7 +311,7 @@ function showLive() {
     const live = $("live");
     setAspect(live.width, live.height);
   } else applyIdleAspect();
-  setName(liveName);
+  setName(liveName, liveModeName());
   markSelection();
 }
 
@@ -333,7 +344,7 @@ function showStill(item) {
   still.src = stillSrc(pic);
   still.alt = pic.name || t("picture.one");
   setAspect(pic.w || 320, pic.h || 256);
-  setName(pic.name || "");
+  setName(pic.name || "", modeName(pic.mode));
   reveal();
   markSelection();
 }
@@ -657,7 +668,7 @@ function onEvent(ev) {
   }
   if (ev.type === "label") {
     liveName = ev.name || liveName;
-    if (showing === "live") setName(liveName);
+    if (showing === "live") setName(liveName, liveModeName());
     return;
   }
   if (ev.type === "rx") {
@@ -966,6 +977,7 @@ function initControls() {
   $("mode").addEventListener("change", () => {
     if (engine) engine.setMode($("mode").value);
     applyIdleAspect();
+    if (showing === "live") setName(liveName, liveModeName());
     saveCurrentPrefs();
   });
   $("device").addEventListener("change", () => {
