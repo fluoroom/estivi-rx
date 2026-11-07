@@ -28,13 +28,13 @@ The container restarts unless it is stopped by hand. It serves HTTP on host port
 
 The header is the title, a local clock with seconds and a small UTC clock with seconds under it, the input device, Mono / Left / Right, input gain, the level meter, the SSTV mode, Start / Stop receiving, and the theme button. Gain runs from −12 dB to +36 dB in 0.5 dB steps. The slider turns red above 0 dB. The meter covers about −42 dB to 0 dB. The theme button names the theme you switch to: Light while the page is dark, Dark while it is light. Dark is the default.
 
-The visor is the picture. Its shape follows the mode that is decoding. With nothing arriving it is 320×256. The picture is scaled to fit the window, and the whole frame stays visible. Under it, still outside the picture: the program or image name, Bicubic / Neighbor, Save, Fullscreen, and Reset. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
+The visor is the picture. Its shape follows the mode that is decoding. With nothing arriving it is 320×256. The picture is scaled to fit the window, and the whole frame stays visible. Under it, still outside the picture: the program or image name, Bicubic / Neighbor, Save, Delete, Fullscreen, and Reset. Delete is there only for a saved picture, and it asks before removing that one picture. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
 
-Neighbor is the default. Each received pixel stays a hard block. Bicubic redraws that same picture up to the visor size. The button names the mode you get if you click it. Timeline thumbnails stay neighbor either way. Save writes the received pixels as a lossless PNG and does not include the grain or the enlargement.
+Bicubic is the default. It redraws that same picture up to the visor size. Neighbor keeps each received pixel a hard block. The button names the mode you get if you click it. Timeline thumbnails stay neighbor either way. Save writes the received pixels as a lossless PNG and does not include the grain or the enlargement.
 
 Grain is only on the live view. It fills the visor when nothing is arriving, and it fills the rows that have not been revealed yet while a picture is coming in. A finished picture, a picture stopped halfway, a saved thumbnail, and the Save file have none.
 
-The first timeline slot is always the live decoder. Clicking it, or Reset, puts the big visor back on live. Clicking a saved picture shows that picture until Reset, another picture, the live slot, or a new reception. A new reception shows the live picture as it arrives, then holds the finished image. The copy is stored when the reception ends, and it becomes the second timeline entry. Clear image memory asks before it drops the pictures and leaves the schedule. The thin receive marks on the hour row open the same saved picture.
+The first timeline slot is always the live decoder. Clicking it, or Reset, puts the big visor back on live. Clicking a saved picture shows that picture until Reset, another picture, the live slot, or a new reception. A new reception shows the live picture as it arrives, then holds the finished image. The copy is stored when the reception ends, and it becomes the second timeline entry. If the signal disappears during a picture, the page holds the partial picture and keeps looking for the same mode's lines for 30% of that mode's picture time. If the signal returns, the picture continues from where it now is and the lines lost in between stay empty. If it does not return in time, the partial picture is saved to the timeline and the visor goes back to live view. A new VIS also ends the partial picture and starts the next one. The timeout is per mode: 34.3 s for Martin M1, 10.8 s for Robot 36, 37.8 s for PD 120, and 21.0 s for YoniQ. Clear image memory asks before it drops every picture and leaves the schedule. The thin receive marks on the hour row open the same saved picture.
 
 Under the timeline, the hour row starts at the top of the current hour and runs until 12 hours after the last program still on today's guide. That window stays put so the yellow line can travel with the clock, and it is pinned again when the clock leaves it. A thin mark sits on each saved picture whose receive time falls inside the row. The same clock hour can appear twice when the row crosses midnight.
 
@@ -42,7 +42,7 @@ Calendar opens the next 14 days. A program that crosses midnight stays one entry
 
 The footer is `LU1AQY 2026`. The page title is `estivi rx`.
 
-Device, channel, gain, SSTV mode, theme, and the scaling choice are remembered in this browser, with the pictures and the guide.
+Device, channel, gain, SSTV mode, the last mode actually received, theme, and the scaling choice are remembered in this browser, with the pictures and the guide.
 
 ## What it receives
 
@@ -54,7 +54,7 @@ An info frame carries the lines in `AX25.md` of the transmitter: `FREQ`, `CALL`,
 
 A program with weekdays is placed on those days. `DAYSLEFT` counts from the local day it was heard, including that day; `0` means no end, and the largest value is `99`. A program stays in the guide until the calendar is cleared, even if it is not heard again; its own `DAYSLEFT` can still stop it. A common block has no `DAYS` line and no day of its own, so it is dropped, including a `NEXT` entry without weekdays.
 
-`ESTIVI MODE` names the piece that follows: the short mode, then an optional `WELCOME`, `BUMPER PRE`, `BUMPER POST`, or `BYE`. The visor joins that to the program name (`Noticias · Welcome`). The label lasts 20 seconds and is used when the picture locks. VIS chooses the mode. An unknown short still labels the piece. Auto ignores a VIS code that is not in the table below. A manual mode forces that mode's line timing and still waits for the VIS header.
+`ESTIVI MODE` names the piece that follows: the short mode, then an optional `WELCOME`, `BUMPER PRE`, `BUMPER POST`, or `BYE`. The visor joins that to the program name (`Noticias · Welcome`). The label lasts 20 seconds and is used when the picture locks. VIS chooses the mode. An unknown short still labels the piece. Auto ignores a VIS code that is not in the table below. A manual mode forces that mode's line timing. A picture can also start mid-image, with no VIS: the decoder locks onto four line syncs of a known mode and receives the rest of that picture. Manual uses the mode in the box; Auto uses the last mode received. With no last mode, Auto waits for the next VIS. The missed top of the picture is not reconstructed.
 
 Sync is 1200 Hz, black 1500 Hz, white 2300 Hz.
 
@@ -73,9 +73,9 @@ Only the analog YoniQ mode is decoded. The former DGT YQ clean-copy button, its 
 
 ## Files
 
-`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS, and CSS. `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, and the guide. Those tests are not copied into the image.
+`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS, and CSS. `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, mid-image starts, lost-signal recovery, and the guide. Those tests are not copied into the image.
 
-Everything the page remembers is in IndexedDB under the database name `estivi rx`: the pictures as lossless PNG blobs, newest first and capped at 40, plus the guide and the preferences. Clearing the pictures does not clear the guide, and clearing the guide does not touch the pictures.
+Everything the page remembers is in IndexedDB under the database name `estivi rx`: the pictures as lossless PNG blobs, newest first and capped at 40, plus the guide and the preferences. Deleting one picture removes only that one; clearing the pictures does not clear the guide, and clearing the guide does not touch the pictures.
 
 ## License
 

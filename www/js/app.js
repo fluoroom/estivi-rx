@@ -1,9 +1,10 @@
 import { Engine } from "./engine.js";
-import { MODES } from "./modes.js";
+import { MODES, modeByShort } from "./modes.js";
 import { buildGuide, extendSpan, ingest, layoutBlocks, layoutInSpan } from "./schedule.js";
 import {
   clearGuide,
   clearImages,
+  forgetImage,
   loadGuide,
   loadImages,
   loadPrefs,
@@ -34,7 +35,9 @@ let imageSeq = 0;
 let fillingDevices = false;
 let channelMode = "mono";
 let theme = "dark";
-let scaleMode = "neighbor";
+let scaleMode = "bicubic";
+let scaleChosen = false;
+let lastMode = "";
 let vu = 0;
 let pictureAr = 320 / 256;
 let revealedRow = 0;
@@ -278,6 +281,7 @@ function markSelection() {
 function showLive() {
   showing = "live";
   selectedId = null;
+  $("delete").hidden = true;
   reveal();
   if (receivingPicture) {
     const live = $("live");
@@ -306,6 +310,7 @@ function showStill(item) {
   }
   selectedId = pic.id;
   showing = "still";
+  $("delete").hidden = false;
   const still = $("still");
   still.onload = () => present();
   still.src = stillSrc(pic);
@@ -565,6 +570,11 @@ async function finishReception(ev) {
     png = await pngBlob(ev.rgba, ev.width, ev.height);
   } catch (err) {
     fail(err);
+    if (ev.lost && my === rxSeq) {
+      heldPicture = false;
+      showLive();
+      startNoise();
+    }
     return;
   }
   const item = {
@@ -587,6 +597,14 @@ async function finishReception(ev) {
   renderTimeline();
   renderGuide();
   if (my !== rxSeq) return;
+  if (ev.lost) {
+    // The picture had already lost its signal. The copy is in the timeline;
+    // the visor goes back to the live decoder instead of holding it.
+    heldPicture = false;
+    showLive();
+    startNoise();
+    return;
+  }
   const shown = images.find((it) => it.id === item.id) || images[0];
   if (shown) showStill(shown);
 }
@@ -607,6 +625,10 @@ function onEvent(ev) {
     rxSeq++;
     heldPicture = false;
     receivingPicture = true;
+    if (ev.mode && ev.mode !== lastMode) {
+      lastMode = ev.mode;
+      saveCurrentPrefs();
+    }
     liveName = ev.name || liveName;
     const live = $("live");
     live.width = ev.width;
@@ -641,8 +663,10 @@ function saveCurrentPrefs() {
     channel: channelMode,
     gain: Number($("gain").value),
     mode: $("mode").value,
+    lastMode,
     theme,
     scale: scaleMode,
+    scaleChosen,
   }).catch((err) => fail(err));
 }
 
@@ -798,6 +822,7 @@ async function start(opts = {}) {
     const node = new AudioWorkletNode(ctx, "tap");
     node.port.postMessage({ channel: channelMode });
     const eng = new Engine(ctx.sampleRate, { demod: false });
+    eng.setLastMode(lastMode);
     eng.setMode($("mode").value);
     eng.onEvent = onEvent;
     node.port.onmessage = (msg) => {
@@ -887,6 +912,7 @@ function initControls() {
     saveCurrentPrefs();
   });
   $("scale-mode").addEventListener("click", () => {
+    scaleChosen = true;
     scaleMode = scaleMode === "bicubic" ? "neighbor" : "bicubic";
     applyScale();
     saveCurrentPrefs();
@@ -896,6 +922,27 @@ function initControls() {
     a.href = pngOfVisor();
     a.download = "estivi-rx.png";
     a.click();
+  });
+  $("delete").addEventListener("click", async () => {
+    if (showing !== "still" || selectedId == null) return;
+    if (!window.confirm("Delete this picture? This cannot be undone.")) return;
+    const id = selectedId;
+    const item = images.find((it) => it.id === id);
+    try {
+      await forgetImage(id);
+    } catch (err) {
+      fail(err);
+      return;
+    }
+    if (item && item.url) URL.revokeObjectURL(item.url);
+    $("still").removeAttribute("src");
+    images = images.filter((it) => it.id !== id);
+    selectedId = null;
+    heldPicture = false;
+    renderTimeline();
+    renderGuide();
+    showLive();
+    startNoise();
   });
   $("full").addEventListener("click", () => {
     const pic = $("picture");
@@ -959,7 +1006,9 @@ async function boot() {
 
   channelMode = prefs.channel === "left" || prefs.channel === "right" ? prefs.channel : "mono";
   theme = prefs.theme === "light" ? "light" : "dark";
-  scaleMode = prefs.scale === "bicubic" ? "bicubic" : "neighbor";
+  scaleChosen = prefs.scaleChosen === true;
+  scaleMode = scaleChosen && prefs.scale === "neighbor" ? "neighbor" : "bicubic";
+  lastMode = modeByShort(prefs.lastMode) ? prefs.lastMode : "";
   showing = images.length ? "still" : "live";
 
   applyTheme(theme);

@@ -36,6 +36,10 @@ export class Engine {
     this.sstv.setForced(!short || short === "auto" ? null : modeByShort(short));
   }
 
+  setLastMode(short) {
+    this.sstv.setLastMode(short ? modeByShort(short) : null);
+  }
+
   push(samples) {
     let energy = 0;
     for (let i = 0; i < samples.length; i++) energy += samples[i] * samples[i];

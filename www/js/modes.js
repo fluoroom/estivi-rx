@@ -57,6 +57,18 @@ export function modeByVis(code) {
   return MODES.find((m) => m.vis === c) || null;
 }
 
+// The timer that gives a lost picture a chance to come back. It is a share of
+// the time that mode takes to send its whole picture.
+export const LOSS_TIMEOUT_SHARE = 0.3;
+
+export function pictureMs(m) {
+  return m.tx * lineMs(m);
+}
+
+export function lossTimeoutMs(m) {
+  return pictureMs(m) * LOSS_TIMEOUT_SHARE;
+}
+
 export function lineMs(m) {
   switch (m.family) {
     case "martin":

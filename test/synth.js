@@ -21,16 +21,30 @@ export function tone(hz, ms) {
   return { hz, ms };
 }
 
+export function noise(ms, amp = 0.08) {
+  return { noise: true, ms, amp };
+}
+
 export function render(segs, fs, amp = 0.55) {
   let tEnd = 0;
   let n = 0;
   let phase = 0;
+  let seed = 0x9e3779b9;
+  const rnd = () => {
+    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+    return (seed + 0.5) / 4294967296;
+  };
   const totalMs = segs.reduce((sum, seg) => sum + seg.ms, 0);
   const total = Math.round((totalMs * fs) / 1000);
   const out = new Float32Array(total);
   for (const seg of segs) {
     tEnd += seg.ms / 1000;
     const segEnd = Math.min(total, Math.round(tEnd * fs));
+    if (seg.noise) {
+      const level = seg.amp;
+      while (n < segEnd) out[n++] = (rnd() * 2 - 1) * level;
+      continue;
+    }
     if (!(seg.hz > 0)) {
       while (n < segEnd) out[n++] = 0;
       continue;
@@ -155,10 +169,16 @@ function lineSegs(mode, sample, line) {
   return segs;
 }
 
+export function pictureSegments(mode, sample, from, count) {
+  const segs = [];
+  for (let line = from; line < from + count; line++) segs.push(...lineSegs(mode, sample, line));
+  return segs;
+}
+
 export function sstv(mode, sample, nLines, leadMs = 250) {
   const segs = [tone(0, leadMs), ...visSegments(mode)];
   if (mode.family === "scottie") segs.push(tone(SYNC_HZ, SCOTTIE_SYNC_MS));
-  for (let line = 0; line < nLines; line++) segs.push(...lineSegs(mode, sample, line));
+  segs.push(...pictureSegments(mode, sample, 0, nLines));
   segs.push(tone(0, 500));
   return segs;
 }

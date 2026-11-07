@@ -4,6 +4,7 @@ import {
   SCOTTIE_GAP_MS,
   SCOTTIE_SYNC_MS,
   lineMs,
+  lossTimeoutMs,
   modeByVis,
   openingSyncMs,
   yccToRgb,
@@ -133,6 +134,62 @@ class VisHunter {
   }
 }
 
+// Finds the line sync of one known mode without a VIS header. Four pulses at
+// the mode's line spacing are enough to know a picture is really there; a lone
+// pulse in noise or AX.25 is not.
+class SyncHunter {
+  constructor(fs, mode) {
+    this.fs = fs;
+    this.mode = mode;
+    this.reset();
+  }
+
+  ms(n) {
+    return Math.round((n * this.fs) / 1000);
+  }
+
+  reset() {
+    this.on = false;
+    this.start = 0;
+    this.pulses = [];
+  }
+
+  push(i, f) {
+    const sync = f >= 1000 && f <= 1400;
+    if (sync) {
+      if (!this.on) {
+        this.on = true;
+        this.start = i;
+      }
+      return null;
+    }
+    if (!this.on) return null;
+    this.on = false;
+    const width = i - this.start;
+    const want = this.ms(openingSyncMs(this.mode));
+    const widthTol = Math.max(this.ms(1.5), want * 0.45);
+    if (Math.abs(width - want) > widthTol) return null;
+    this.pulses.push({ start: this.start, end: i });
+    if (this.pulses.length > 5) this.pulses.shift();
+    return this.detect();
+  }
+
+  detect() {
+    if (this.pulses.length < 4) return null;
+    const period = this.ms(lineMs(this.mode));
+    const tol = Math.max(this.ms(1.5), period * 0.015);
+    const p = this.pulses;
+    const a = p[p.length - 4];
+    const b = p[p.length - 3];
+    const c = p[p.length - 2];
+    const d = p[p.length - 1];
+    if (Math.abs(b.start - a.start - period) > tol) return null;
+    if (Math.abs(c.start - b.start - period) > tol) return null;
+    if (Math.abs(d.start - c.start - period) > tol) return null;
+    return { first: a, last: d };
+  }
+}
+
 function parityMatches(mode, code, parity) {
   let ones = parity ? 1 : 0;
   for (let i = 0; i < 7; i++) if ((code >> i) & 1) ones++;
@@ -155,16 +212,37 @@ export class Sstv {
     this.hunter = new VisHunter(fs);
     this.phase = "hunt";
     this.forced = null;
+    this.lastMode = null;
     this.emit = () => {};
     this.lastTones = null;
     this.started = false;
     this.mode = null;
     this.buf = null;
     this.line = 0;
+    this.parity = 0;
+    this.startedMid = false;
+    this.now = 0;
+    this.midMode = null;
+    this.midHunter = null;
+    this.syncHunter = null;
+    this.lostAt = 0;
+    this.lostLine = 0;
+    this.lostExpect = 0;
+    this.lossSamples = 0;
   }
 
   setForced(mode) {
+    if (this.forced === mode) return;
     this.forced = mode;
+    this.midMode = null;
+    this.midHunter = null;
+  }
+
+  setLastMode(mode) {
+    if (this.lastMode === mode) return;
+    this.lastMode = mode;
+    this.midMode = null;
+    this.midHunter = null;
   }
 
   samp(ms) {
@@ -173,12 +251,40 @@ export class Sstv {
 
   sample(_t, f) {
     const i = this.ring.push(f);
+    this.now = i;
+    if (this.phase === "hold") {
+      this.pumpHold(i, f);
+      return;
+    }
+    if (this.startedMid && (this.phase === "body" || this.phase === "seek" || this.phase === "scottie")) {
+      const edge = this.hunter.push(i, f);
+      if (edge != null) {
+        // A new picture replaces this partial one. Save it and go live.
+        this.finish(false, true);
+        this.visEdge = edge;
+        this.phase = "vis";
+        return;
+      }
+    }
     if (this.phase !== "hunt") return;
     const edge = this.hunter.push(i, f);
     if (edge != null) {
       this.visEdge = edge;
       this.phase = "vis";
+      return;
     }
+    const mode = this.forced || this.lastMode;
+    if (!mode) {
+      this.midMode = null;
+      this.midHunter = null;
+      return;
+    }
+    if (this.midMode !== mode) {
+      this.midMode = mode;
+      this.midHunter = new SyncHunter(this.fs, mode);
+    }
+    const found = this.midHunter.push(i, f);
+    if (found) this.startMid(found.first);
   }
 
   endBlock() {
@@ -194,6 +300,7 @@ export class Sstv {
     if (this.phase === "body") return this.pumpBody();
     if (this.phase === "seek") return this.pumpSeek();
     if (this.phase === "scottie") return this.pumpScottie();
+    if (this.phase === "hold") return false;
     return false;
   }
 
@@ -207,14 +314,20 @@ export class Sstv {
     else if (fromVis && parityMatches(fromVis, got.code, got.parity)) mode = fromVis;
     if (!mode) return this.giveUp();
     this.mode = mode;
+    this.lastMode = mode;
     this.line = 0;
     this.miss = 0;
+    this.parity = 0;
+    this.startedMid = false;
+    this.hunter.reset();
     this.started = false;
     this.buf = new Uint8ClampedArray(mode.w * mode.h * 4);
     for (let p = 3; p < this.buf.length; p += 4) this.buf[p] = 255;
     this.cr = null;
     this.yEven = null;
     this.syncEnd = null;
+    this.midMode = null;
+    this.midHunter = null;
     this.visEnd = this.visEdge + this.samp(300);
     this.phase = "lock";
     return true;
@@ -224,6 +337,9 @@ export class Sstv {
     this.phase = "hunt";
     this.hunter.reset();
     this.mode = null;
+    this.startedMid = false;
+    this.midMode = null;
+    this.midHunter = null;
     return false;
   }
 
@@ -242,6 +358,107 @@ export class Sstv {
     for (let b = 0; b < 7; b++) if (tones[1 + b] < 1200) code |= 1 << b;
     const parity = tones[8] < 1200 ? 1 : 0;
     return { code, parity };
+  }
+
+  robotParity(syncEnd) {
+    const r = this.mode.robot;
+    const at = syncEnd + this.samp(r.porch + r.y + r.sep * 0.5);
+    const f = this.ring.avg(at - this.samp(0.6), at + this.samp(0.6));
+    return Number.isFinite(f) && f > 1900;
+  }
+
+  startMid(first) {
+    const mode = this.midMode;
+    if (!mode) return false;
+    this.mode = mode;
+    this.line = 0;
+    this.miss = 0;
+    this.parity = 0;
+    this.started = false;
+    this.startedMid = true;
+    this.buf = new Uint8ClampedArray(mode.w * mode.h * 4);
+    for (let p = 3; p < this.buf.length; p += 4) this.buf[p] = 255;
+    this.cr = null;
+    this.yEven = null;
+    this.syncEnd = first.end;
+    this.midMode = null;
+    this.midHunter = null;
+    this.hunter.reset();
+    if (mode.family === "robot" && mode.robot.alternating) {
+      this.parity = this.robotParity(first.end) ? 1 : 0;
+    }
+    if (mode.family === "scottie") {
+      this.phase = "scottie";
+      this.decodeScottie(first.end);
+      this.line = 1;
+      this.syncEnd = first.end;
+    } else {
+      this.phase = "body";
+    }
+    return true;
+  }
+
+  enterHold(expect) {
+    const mode = this.mode;
+    if (!mode) return this.giveUp();
+    this.phase = "hold";
+    // Time the lost picture from the first missing sync, not from the point
+    // where the decoder has given up on it.
+    this.lostAt = expect;
+    this.lostLine = this.line;
+    this.lostExpect = expect;
+    this.lossSamples = this.samp(lossTimeoutMs(mode));
+    if (!this.startedMid) this.hunter.reset();
+    this.syncHunter = new SyncHunter(this.fs, mode);
+    this.miss = 0;
+    return false;
+  }
+
+  pumpHold(i, f) {
+    const edge = this.hunter.push(i, f);
+    if (edge != null) {
+      // A new picture arrived while this one was lost. Save what was heard
+      // and let the visor go back to live for the new one.
+      this.finish(false, true);
+      this.visEdge = edge;
+      this.phase = "vis";
+      return;
+    }
+    const found = this.syncHunter ? this.syncHunter.push(i, f) : null;
+    if (found) {
+      this.resumeFrom(found.first);
+      return;
+    }
+    if (i - this.lostAt >= this.lossSamples) this.finish(false, true);
+  }
+
+  resumeFrom(first) {
+    const mode = this.mode;
+    if (!mode) {
+      this.finish(false, true);
+      return;
+    }
+    const period = this.samp(lineMs(mode));
+    const skipped = Math.max(0, Math.round((first.end - this.lostExpect) / period));
+    const line = this.lostLine + skipped;
+    if (line >= mode.tx) {
+      this.finish(false, true);
+      return;
+    }
+    this.line = line;
+    this.miss = 0;
+    this.cr = null;
+    this.yEven = null;
+    this.syncEnd = first.end;
+    this.syncHunter = null;
+    if (mode.family === "scottie") {
+      this.phase = "scottie";
+      this.decodeScottie(first.end);
+      this.line = line + 1;
+      this.syncEnd = first.end;
+    } else {
+      this.phase = "body";
+    }
   }
 
   pumpLock() {
@@ -281,17 +498,13 @@ export class Sstv {
     const tail = this.samp(36);
     if (this.ring.n < this.expect + tail) return false;
     if (this.mostlyClosed(this.expect + this.samp(4), this.expect + tail)) {
-      this.finish(false);
-      return false;
+      return this.enterHold(this.expect);
     }
     const edge = this.findRisingEdge(this.expect, radius);
     if (edge == null) {
       this.miss++;
       this.syncEnd = this.expect;
-      if (this.miss >= 3) {
-        this.finish(false);
-        return false;
-      }
+      if (this.miss >= 2) return this.enterHold(this.expect);
     } else {
       this.miss = 0;
       this.syncEnd = edge;
@@ -309,18 +522,14 @@ export class Sstv {
     const radius = this.samp(16);
     if (this.ring.n < expect + radius + gap + scan) return false;
     if (this.line > 0 && this.mostlyClosed(expect + this.samp(4), expect + this.samp(30))) {
-      this.finish(false);
-      return false;
+      return this.enterHold(expect);
     }
     let edge = this.findRisingEdge(expect, radius);
     if (edge == null) {
       if (this.line === 0) return this.giveUp();
       this.miss++;
       edge = expect;
-      if (this.miss >= 3) {
-        this.finish(false);
-        return false;
-      }
+      if (this.miss >= 2) return this.enterHold(expect);
     } else this.miss = 0;
     this.decodeScottie(edge);
     this.syncEnd = edge;
@@ -336,17 +545,21 @@ export class Sstv {
     const from = Math.floor(expect - radius);
     const to = Math.floor(expect + radius);
     const win = Math.max(2, Math.round(this.fs * 0.0007));
+    const sync = this.samp(openingSyncMs(this.mode));
+    const guard = Math.max(2, Math.round(this.fs * 0.0005));
     let best = null;
     let bestDist = Infinity;
     for (let i = from; i <= to; i += 2) {
       const before = this.ring.avg(i - win * 2, i - 1);
       const after = this.ring.avg(i + 1, i + win);
-      if (before < 1420 && after > 1465) {
-        const dist = Math.abs(i - expect);
-        if (dist < bestDist) {
-          bestDist = dist;
-          best = i;
-        }
+      if (!(before < 1420 && after > 1465)) continue;
+      // The edge must end a real 1200 Hz sync pulse, not just any step in noise.
+      const pulse = this.ring.avg(i - sync + guard, i - guard);
+      if (!(pulse >= 1000 && pulse <= 1400)) continue;
+      const dist = Math.abs(i - expect);
+      if (dist < bestDist) {
+        bestDist = dist;
+        best = i;
       }
     }
     return best;
@@ -407,7 +620,7 @@ export class Sstv {
       t += this.samp(r.y + r.sep + r.sepPorch);
       const c0 = this.readLevels(t, r.c);
       if (r.alternating) {
-        if (this.line % 2 === 0) {
+        if (((this.line + this.parity) & 1) === 0) {
           this.cr = c0;
           this.yEven = Y;
           this.paintGray(this.line, Y);
@@ -514,20 +727,28 @@ export class Sstv {
     });
   }
 
-  finish(complete) {
+  finish(complete, lost = false) {
     const started = this.started;
     const buf = this.buf;
     const mode = this.mode;
     const lines = this.line;
+    const timedOut = Boolean(lost);
     this.phase = "hunt";
     this.hunter.reset();
     this.started = false;
     this.mode = null;
     this.buf = null;
+    this.parity = 0;
+    this.startedMid = false;
+    this.midMode = null;
+    this.midHunter = null;
+    this.syncHunter = null;
+    this.miss = 0;
     if (!started || !buf || !mode) return;
     this.emit({
       type: "rx-end",
       complete: Boolean(complete) && lines >= mode.tx,
+      lost: timedOut,
       width: mode.w,
       height: mode.h,
       mode: mode.short,

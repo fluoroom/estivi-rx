@@ -153,6 +153,17 @@ export async function rememberImage(item) {
   return loadImages();
 }
 
+export async function forgetImage(id) {
+  const db = await openDb();
+  const tx = db.transaction(IMAGES, "readwrite");
+  await requestAndDone(tx, tx.objectStore(IMAGES).delete(id));
+  const url = urls.get(id);
+  if (url) {
+    URL.revokeObjectURL(url);
+    urls.delete(id);
+  }
+}
+
 export async function clearImages() {
   const db = await openDb();
   const tx = db.transaction(IMAGES, "readwrite");
