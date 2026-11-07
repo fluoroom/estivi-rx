@@ -217,7 +217,9 @@ function applyScale() {
   const pic = $("picture");
   pic.dataset.scale = scaleMode;
   const btn = $("scale-mode");
-  btn.textContent = scaleMode === "bicubic" ? "Neighbor" : "Bicubic";
+  btn.textContent = scaleMode === "bicubic" ? "Pixels" : "Blur";
+  btn.title = "Resize style";
+  btn.setAttribute("aria-label", "Resize style");
   btn.setAttribute("aria-pressed", scaleMode === "bicubic" ? "true" : "false");
   present();
 }
