@@ -194,7 +194,7 @@ function startNoise() {
   $("noise").hidden = false;
   paintNoise();
   if (noiseTimer) return;
-  noiseTimer = setInterval(paintNoise, 1000 / 15);
+  noiseTimer = setInterval(paintNoise, 1000 / 8);
 }
 
 function stopNoise() {
