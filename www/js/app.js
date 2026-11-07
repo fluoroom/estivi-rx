@@ -1,4 +1,5 @@
 import { Engine } from "./engine.js";
+import { detectLocale, getLocale, setLocale, t } from "./i18n.js";
 import { MODES, modeByShort } from "./modes.js";
 import { buildGuide, extendSpan, ingest, layoutBlocks, layoutInSpan } from "./schedule.js";
 import {
@@ -14,8 +15,6 @@ import {
 } from "./store.js";
 
 const $ = (id) => document.getElementById(id);
-
-const WD = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 let prefs = {};
 let guideState = { stations: {} };
@@ -37,6 +36,8 @@ let channelMode = "mono";
 let theme = "dark";
 let scaleMode = "bicubic";
 let scaleChosen = false;
+let langPref = "auto";
+let lastError = null;
 let lastMode = "";
 let vu = 0;
 let pictureAr = 320 / 256;
@@ -217,11 +218,31 @@ function applyScale() {
   const pic = $("picture");
   pic.dataset.scale = scaleMode;
   const btn = $("scale-mode");
-  btn.textContent = scaleMode === "bicubic" ? "Pixels" : "Blur";
-  btn.title = "Resize style";
-  btn.setAttribute("aria-label", "Resize style");
+  btn.textContent = scaleMode === "bicubic" ? t("scale.pixels") : t("scale.blur");
+  btn.title = t("scale.title");
+  btn.setAttribute("aria-label", t("scale.title"));
   btn.setAttribute("aria-pressed", scaleMode === "bicubic" ? "true" : "false");
   present();
+}
+
+function paintRun() {
+  const btn = $("run");
+  btn.textContent = receiving ? t("run.stop") : t("run.start");
+  btn.classList.toggle("on", receiving);
+}
+
+function applyLanguage() {
+  document.documentElement.lang = getLocale();
+  for (const el of document.querySelectorAll("[data-i18n]")) el.textContent = t(el.dataset.i18n);
+  for (const el of document.querySelectorAll("[data-i18n-title]")) el.title = t(el.dataset.i18nTitle);
+  for (const el of document.querySelectorAll("[data-i18n-aria]")) {
+    el.setAttribute("aria-label", t(el.dataset.i18nAria));
+  }
+  $("lang").value = langPref;
+  applyTheme(theme);
+  applyScale();
+  paintRun();
+  if (!$("err").hidden && lastError) $("err").textContent = describeError(lastError);
 }
 
 function present() {
@@ -316,7 +337,7 @@ function showStill(item) {
   const still = $("still");
   still.onload = () => present();
   still.src = stillSrc(pic);
-  still.alt = pic.name || "";
+  still.alt = pic.name || t("picture.one");
   setAspect(pic.w || 320, pic.h || 256);
   setName(pic.name || "");
   reveal();
@@ -347,7 +368,7 @@ function renderTimeline() {
   const liveBtn = document.createElement("button");
   liveBtn.type = "button";
   liveBtn.className = "thumb live-thumb";
-  liveBtn.setAttribute("aria-label", "Live");
+  liveBtn.setAttribute("aria-label", t("live"));
   if (live.width && live.height) liveBtn.style.aspectRatio = `${live.width} / ${live.height}`;
   const thumb = document.createElement("canvas");
   thumb.id = "thumb";
@@ -366,7 +387,7 @@ function renderTimeline() {
     const img = document.createElement("img");
     const src = stillSrc(item);
     if (src) img.src = src;
-    img.alt = item.name || "";
+    img.alt = item.name || t("picture.one");
     if (item.w && item.h) btn.style.aspectRatio = `${item.w} / ${item.h}`;
     btn.append(img);
     btn.addEventListener("click", () => showStill(item));
@@ -451,10 +472,10 @@ function drawMarks(span) {
     line.type = "button";
     line.className = "rx-line";
     line.dataset.at = String(item.at);
-    line.title = `${item.name || "Picture"} · ${clock(item.at)}`;
+    line.title = `${item.name || t("picture.one")} · ${clock(item.at)}`;
     line.setAttribute(
       "aria-label",
-      `Open ${item.name || "picture"} received at ${clock(item.at)}`,
+      t("mark.open", { name: item.name || t("picture.lower"), time: clock(item.at) }),
     );
     line.addEventListener("click", () => showStill(item));
     host.append(line);
@@ -489,7 +510,7 @@ function renderCalendar(guide) {
     const card = document.createElement("section");
     card.className = "day";
     const h = document.createElement("h3");
-    h.textContent = `${WD[day.date.getDay()]} ${day.date.getDate()}`;
+    h.textContent = `${t(`dow.${day.date.getDay()}`)} ${day.date.getDate()}`;
     card.append(h);
     const inner = document.createElement("div");
     inner.className = "day-body";
@@ -553,7 +574,7 @@ function pngBlob(rgba, w, h) {
     c.height = h;
     c.getContext("2d").putImageData(new ImageData(new Uint8ClampedArray(rgba), w, h), 0, 0);
     c.toBlob(
-      (blob) => (blob ? resolve(blob) : reject(new Error("Could not encode the picture"))),
+      (blob) => (blob ? resolve(blob) : reject(keyedError("error.png"))),
       "image/png",
     );
   });
@@ -669,6 +690,7 @@ function saveCurrentPrefs() {
     theme,
     scale: scaleMode,
     scaleChosen,
+    lang: langPref,
   }).catch((err) => fail(err));
 }
 
@@ -704,13 +726,35 @@ async function loadTap(ctx) {
   }
 }
 
+function keyedError(key, cause) {
+  const err = new Error(t(key));
+  err.key = key;
+  if (cause !== undefined) err.cause = cause;
+  return err;
+}
+
+function describeError(err) {
+  if (err && err.key) return t(err.key);
+  const name = err && err.name;
+  if (name === "NotAllowedError" || name === "SecurityError") return t("error.micDenied");
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return t("error.micMissing");
+  if (name === "NotReadableError" || name === "TrackStartError") return t("error.micBusy");
+  if (name === "OverconstrainedError" || name === "ConstraintNotSatisfiedError") {
+    return t("error.micConstraint");
+  }
+  if (name === "AbortError") return t("error.micAbort");
+  return err && err.message ? err.message : t("error.mic");
+}
+
 function fail(err) {
+  lastError = err || keyedError("error.mic");
   const el = $("err");
   el.hidden = false;
-  el.textContent = err && err.message ? err.message : "Microphone unavailable";
+  el.textContent = describeError(lastError);
 }
 
 function clearErr() {
+  lastError = null;
   $("err").hidden = true;
   $("err").textContent = "";
 }
@@ -726,18 +770,24 @@ async function refreshDevices() {
     sel.replaceChildren();
     const fallback = document.createElement("option");
     fallback.value = "";
-    fallback.textContent = "Default";
+    fallback.dataset.i18n = "device.default";
+    fallback.textContent = t("device.default");
     sel.append(fallback);
     for (const d of inputs) {
       const opt = document.createElement("option");
       opt.value = d.deviceId;
-      opt.textContent = d.label || "Audio input";
+      if (d.label) opt.textContent = d.label;
+      else {
+        opt.dataset.i18n = "device.audioInput";
+        opt.textContent = t("device.audioInput");
+      }
       sel.append(opt);
     }
     if (cur && ![...sel.options].some((o) => o.value === cur)) {
       const keep = document.createElement("option");
       keep.value = cur;
-      keep.textContent = "Saved device";
+      keep.dataset.i18n = "device.saved";
+      keep.textContent = t("device.saved");
       sel.append(keep);
     }
     if (cur) sel.value = cur;
@@ -754,8 +804,7 @@ async function shutdown() {
     heldPicture = true;
     hideNoise();
   }
-  $("run").textContent = "Start receiving";
-  $("run").classList.remove("on");
+  paintRun();
   resetVu();
   const cur = audio;
   audio = null;
@@ -791,7 +840,7 @@ function applyTheme(next) {
   theme = next === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
-  $("theme").textContent = theme === "dark" ? "Light" : "Dark";
+  $("theme").textContent = theme === "dark" ? t("theme.toLight") : t("theme.toDark");
 }
 
 async function start(opts = {}) {
@@ -799,7 +848,7 @@ async function start(opts = {}) {
   await shutdown();
   if (my !== seq) return;
   if (!navigator.mediaDevices?.getUserMedia) {
-    fail(new Error("This browser has no microphone access"));
+    fail(keyedError("error.noMicAccess"));
     return;
   }
   let stream = null;
@@ -837,8 +886,7 @@ async function start(opts = {}) {
     engine = eng;
     audio = { ctx, stream, node, gain };
     receiving = true;
-    $("run").textContent = "Stop receiving";
-    $("run").classList.add("on");
+    paintRun();
     clearErr();
     await refreshDevices();
   } catch (err) {
@@ -879,10 +927,12 @@ function initControls() {
   if (prefs.device) {
     const opt = document.createElement("option");
     opt.value = prefs.device;
-    opt.textContent = "Saved device";
+    opt.dataset.i18n = "device.saved";
+    opt.textContent = t("device.saved");
     $("device").append(opt);
     $("device").value = prefs.device;
   }
+  $("lang").value = langPref;
 
   $("gain").addEventListener("input", () => {
     $("gain-out").textContent = formatDb($("gain").value);
@@ -904,6 +954,15 @@ function initControls() {
     if (fillingDevices) return;
     saveCurrentPrefs();
     if (receiving) start();
+  });
+  $("lang").addEventListener("change", () => {
+    const value = $("lang").value;
+    langPref = value === "en" || value === "es" ? value : "auto";
+    setLocale(langPref === "auto" ? detectLocale() : langPref);
+    applyLanguage();
+    renderTimeline();
+    renderGuide();
+    saveCurrentPrefs();
   });
   $("run").addEventListener("click", () => {
     if (receiving) stop();
@@ -927,7 +986,7 @@ function initControls() {
   });
   $("delete").addEventListener("click", async () => {
     if (showing !== "still" || selectedId == null) return;
-    if (!window.confirm("Delete this picture? This cannot be undone.")) return;
+    if (!window.confirm(t("confirm.deleteImage"))) return;
     const id = selectedId;
     const item = images.find((it) => it.id === id);
     try {
@@ -953,7 +1012,7 @@ function initControls() {
   });
   $("reset").addEventListener("click", () => showLive());
   $("clear").addEventListener("click", async () => {
-    if (!window.confirm("Delete every saved picture? This cannot be undone.")) return;
+    if (!window.confirm(t("confirm.clearImages"))) return;
     try {
       await clearImages();
     } catch (err) {
@@ -967,7 +1026,7 @@ function initControls() {
     if (showing === "still") showLive();
   });
   $("clear-cal").addEventListener("click", async () => {
-    if (!window.confirm("Delete every program from the calendar? This cannot be undone.")) return;
+    if (!window.confirm(t("confirm.clearCalendar"))) return;
     try {
       await clearGuide();
     } catch (err) {
@@ -995,6 +1054,8 @@ async function boot() {
   } catch (err) {
     fail(err);
   }
+  langPref = prefs.lang === "en" || prefs.lang === "es" ? prefs.lang : "auto";
+  setLocale(langPref === "auto" ? detectLocale() : langPref);
   try {
     guideState = await loadGuide();
   } catch (err) {
@@ -1013,9 +1074,8 @@ async function boot() {
   lastMode = modeByShort(prefs.lastMode) ? prefs.lastMode : "";
   showing = images.length ? "still" : "live";
 
-  applyTheme(theme);
-  applyScale();
   initControls();
+  applyLanguage();
   renderTimeline();
   if (images.length) showStill();
   else showLive();

@@ -26,7 +26,7 @@ The container restarts unless it is stopped by hand. It serves HTTP on host port
 
 ## The page
 
-The header is the title, a local clock with seconds and a small UTC clock with seconds under it, the input device, Mono / Left / Right, input gain, the level meter, the SSTV mode, Start / Stop receiving, and the theme button. Gain runs from −12 dB to +36 dB in 0.5 dB steps. The slider turns red above 0 dB. The meter covers about −42 dB to 0 dB. The theme button names the theme you switch to: Light while the page is dark, Dark while it is light. Dark is the default.
+The header is the title, a local clock with seconds and a small UTC clock with seconds under it, the input device, Mono / Left / Right, input gain, the level meter, the SSTV mode, Start / Stop receiving, the theme button, and the language selector. Gain runs from −12 dB to +36 dB in 0.5 dB steps. The slider turns red above 0 dB. The meter covers about −42 dB to 0 dB. The theme button names the theme you switch to: Light while the page is dark, Dark while it is light. Dark is the default. The page starts in English, or in Spanish when the browser's languages prefer Spanish. The language selector can force English or Español; its Auto option follows the browser again. A forced choice is saved with the other preferences.
 
 The visor is the picture. Its shape follows the mode that is decoding. With nothing arriving it is 320×256. The picture is scaled to fit the window, and the whole frame stays visible. Under it, still outside the picture: the program or image name, the resize style button (Blur / Pixels), Save, Delete, Fullscreen, and Reset. Delete is there only for a saved picture, and it asks before removing that one picture. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
 
@@ -42,7 +42,7 @@ Calendar opens the next 14 days. A program that crosses midnight stays one entry
 
 The footer is `LU1AQY 2026`. The page title is `estivi rx`.
 
-Device, channel, gain, SSTV mode, the last mode actually received, theme, and the scaling choice are remembered in this browser, with the pictures and the guide.
+Device, channel, gain, SSTV mode, the last mode actually received, theme, the scaling choice, and the language are remembered in this browser, with the pictures and the guide.
 
 ## What it receives
 
@@ -50,7 +50,7 @@ Audio goes through a gain stage into an AudioWorklet. The worklet demodulates th
 
 AX.25 is 1200 baud Bell 202, the way Estivi sends it: mark 1200 Hz, space 2200 Hz, NRZI, LSB first, a stuffed 0 after five 1s. A frame is kept when it is addressed to `ESTIVI`, the control byte is UI (`0x03`), the PID is `0xF0`, and the CRC residue is `0xF0B8`. The text is `ESTIVI 1` or `ESTIVI MODE`.
 
-An info frame carries the lines in `AX25.md` of the transmitter: `FREQ`, `CALL`, `NAME`, `RANGE`, `DAYS`, `DAYSLEFT`, `NEXT`, and `COMMENT`. Unknown lines are ignored. Text that does not start with `ESTIVI ` is ignored. `COMMENT` is kept on the packet and is not shown. The frame has no date and no timezone: `HH:MM` is UTC and weekdays are the English abbreviations the transmitter sends (`Mon` … `Sun`). The guide stores the UTC rule and places it on this computer's local calendar, so the hour row, the calendar, and the main clock show local time while the small clock in the header shows UTC.
+An info frame carries the lines in `AX25.md` of the transmitter: `FREQ`, `CALL`, `NAME`, `RANGE`, `DAYS`, `DAYSLEFT`, `NEXT`, and `COMMENT`. Unknown lines are ignored. Text that does not start with `ESTIVI ` is ignored. `COMMENT` is kept on the packet and is not shown. The frame has no date and no timezone: `HH:MM` is UTC and weekdays are the English abbreviations the transmitter sends (`Mon` … `Sun`), and the calendar shows the local weekday in the page language. The guide stores the UTC rule and places it on this computer's local calendar, so the hour row, the calendar, and the main clock show local time while the small clock in the header shows UTC.
 
 A program with weekdays is placed on those days. `DAYSLEFT` counts from the local day it was heard, including that day; `0` means no end, and the largest value is `99`. A program stays in the guide until the calendar is cleared, even if it is not heard again; its own `DAYSLEFT` can still stop it. A common block has no `DAYS` line and no day of its own, so it is dropped, including a `NEXT` entry without weekdays.
 
@@ -73,7 +73,7 @@ Only the analog YoniQ mode is decoded. The former DGT YQ clean-copy button, its 
 
 ## Files
 
-`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS, and CSS. `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, mid-image starts, lost-signal recovery, and the guide. Those tests are not copied into the image.
+`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS, and CSS. `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, mid-image starts, lost-signal recovery, translations, and the guide. Those tests are not copied into the image.
 
 Everything the page remembers is in IndexedDB under the database name `estivi rx`: the pictures as lossless PNG blobs, newest first and capped at 40, plus the guide and the preferences. Deleting one picture removes only that one; clearing the pictures does not clear the guide, and clearing the guide does not touch the pictures.
 

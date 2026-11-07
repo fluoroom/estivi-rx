@@ -9,46 +9,54 @@
 <body>
   <header>
     <h1>estivi rx</h1>
-    <div class="clock" id="clock" title="Local time with seconds, UTC underneath">
+    <div class="clock" id="clock" data-i18n-title="clock.title" title="Local time with seconds, UTC underneath">
       <span id="clock-local">--:--:--</span>
       <span id="clock-utc">UTC --:--:--</span>
     </div>
     <label class="field">
-      <span>Device</span>
+      <span data-i18n="field.device">Device</span>
       <select id="device">
-        <option value="">Default</option>
+        <option value="" data-i18n="device.default">Default</option>
       </select>
     </label>
     <label class="field">
-      <span>Channel</span>
+      <span data-i18n="field.channel">Channel</span>
       <select id="channel">
-        <option value="mono">Mono</option>
-        <option value="left">Left</option>
-        <option value="right">Right</option>
+        <option value="mono" data-i18n="channel.mono">Mono</option>
+        <option value="left" data-i18n="channel.left">Left</option>
+        <option value="right" data-i18n="channel.right">Right</option>
       </select>
     </label>
     <label class="field">
-      <span>Input gain</span>
+      <span data-i18n="field.gain">Input gain</span>
       <span class="inline">
         <input id="gain" type="range" min="-12" max="36" step="0.5" value="0">
         <span id="gain-out">0 dB</span>
       </span>
     </label>
     <div class="field vu">
-      <span>Level</span>
+      <span data-i18n="field.level">Level</span>
       <span class="inline">
         <div id="vu-bar"></div>
         <span id="vu-read">—</span>
       </span>
     </div>
     <label class="field">
-      <span>SSTV mode</span>
+      <span data-i18n="field.mode">SSTV mode</span>
       <select id="mode">
-        <option value="auto">Auto</option>
+        <option value="auto" data-i18n="mode.auto">Auto</option>
       </select>
     </label>
-    <button type="button" id="run">Start receiving</button>
-    <button type="button" id="theme">Light</button>
+    <button type="button" id="run" data-i18n="run.start">Start receiving</button>
+    <button type="button" id="theme" data-i18n="theme.toLight">Light</button>
+    <label class="field">
+      <span data-i18n="field.language">Language</span>
+      <select id="lang">
+        <option value="auto" data-i18n="lang.auto">Auto</option>
+        <option value="en">English</option>
+        <option value="es">Español</option>
+      </select>
+    </label>
   </header>
   <p id="err" hidden></p>
   <main>
@@ -63,16 +71,16 @@
       </div>
       <div class="bar">
         <div class="name" id="name"></div>
-        <button type="button" id="scale-mode" title="Resize style" aria-label="Resize style">Pixels</button>
-        <button type="button" id="save">Save</button>
-        <button type="button" id="delete" hidden>Delete</button>
-        <button type="button" id="full">Fullscreen</button>
-        <button type="button" id="reset">Reset</button>
+        <button type="button" id="scale-mode" data-i18n-title="scale.title" data-i18n-aria="scale.title" title="Resize style" aria-label="Resize style">Pixels</button>
+        <button type="button" id="save" data-i18n="action.save">Save</button>
+        <button type="button" id="delete" data-i18n="action.delete" hidden>Delete</button>
+        <button type="button" id="full" data-i18n="action.fullscreen">Fullscreen</button>
+        <button type="button" id="reset" data-i18n="action.reset">Reset</button>
       </div>
     </section>
     <div class="timeline-row">
       <div class="scroller" id="timeline"></div>
-      <button type="button" id="clear">Clear image memory</button>
+      <button type="button" id="clear" data-i18n="clear.images">Clear image memory</button>
     </div>
     <div class="guide">
       <div class="hours">
@@ -83,16 +91,16 @@
         <div id="marks" class="marks"></div>
       </div>
       <div class="guide-actions">
-        <button type="button" id="cal">Calendar</button>
-        <button type="button" id="clear-cal">Clear calendar</button>
+        <button type="button" id="cal" data-i18n="calendar.title">Calendar</button>
+        <button type="button" id="clear-cal" data-i18n="calendar.clear">Clear calendar</button>
       </div>
     </div>
   </main>
   <footer>LU1AQY 2026</footer>
   <dialog id="calendar">
     <div class="dialog-bar">
-      <h2>Calendar</h2>
-      <button type="button" id="close-cal">Close</button>
+      <h2 data-i18n="calendar.title">Calendar</h2>
+      <button type="button" id="close-cal" data-i18n="calendar.close">Close</button>
     </div>
     <div id="cal-body"></div>
   </dialog>

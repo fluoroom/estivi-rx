@@ -1,15 +1,16 @@
 import { Ax25 } from "./ax25.js";
 import { Demod } from "./dsp.js";
+import { t } from "./i18n.js";
 import { modeByShort } from "./modes.js";
 import { Sstv } from "./sstv.js";
 
 export function formatLabel(name, mark) {
   const nice =
     {
-      WELCOME: "Welcome",
-      BYE: "Bye",
-      "BUMPER PRE": "Pre-bumper",
-      "BUMPER POST": "Post-bumper",
+      WELCOME: t("mark.welcome"),
+      BYE: t("mark.bye"),
+      "BUMPER PRE": t("mark.pre"),
+      "BUMPER POST": t("mark.post"),
     }[mark] || "";
   if (name && nice) return `${name} · ${nice}`;
   return name || nice || "";

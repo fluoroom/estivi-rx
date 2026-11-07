@@ -2,6 +2,8 @@
 // "estivi rx": the pictures as lossless PNG blobs, the guide, and the
 // preferences. Pictures are newest first, capped at MAX_ITEMS.
 
+import { t } from "./i18n.js";
+
 const DB_NAME = "estivi rx";
 const DB_VERSION = 1;
 const IMAGES = "images";
@@ -10,6 +12,15 @@ const GUIDE_KEY = "guide";
 const PREFS_KEY = "prefs";
 const MAX_ITEMS = 40;
 
+// Keep the translation key on the error so the page can show it again when
+// the language changes.
+function storeError(key, cause) {
+  const err = new Error(t(key));
+  err.key = key;
+  if (cause !== undefined) err.cause = cause;
+  return err;
+}
+
 let dbPromise = null;
 const urls = new Map();
 
@@ -17,7 +28,7 @@ function openDb() {
   if (!dbPromise) {
     dbPromise = new Promise((resolve, reject) => {
       if (typeof indexedDB === "undefined") {
-        reject(new Error("This browser has no IndexedDB"));
+        reject(storeError("error.noIndexedDB"));
         return;
       }
       const req = indexedDB.open(DB_NAME, DB_VERSION);
@@ -30,8 +41,8 @@ function openDb() {
         if (!db.objectStoreNames.contains(META)) db.createObjectStore(META);
       };
       req.onsuccess = () => resolve(req.result);
-      req.onerror = () => reject(req.error || new Error("IndexedDB could not be opened"));
-      req.onblocked = () => reject(new Error("IndexedDB is blocked by another tab"));
+      req.onerror = () => reject(storeError("error.idbOpen", req.error));
+      req.onblocked = () => reject(storeError("error.idbBlocked"));
     });
   }
   return dbPromise;
@@ -47,13 +58,13 @@ function requestAndDone(tx, req) {
     };
     req.onerror = () => {
       failed = true;
-      reject(req.error || new Error("IndexedDB request failed"));
+      reject(storeError("error.idbRequest", req.error));
     };
     tx.oncomplete = () => {
       if (!failed) resolve(value);
     };
     tx.onabort = () => {
-      if (!failed) reject(tx.error || new Error("IndexedDB transaction aborted"));
+      if (!failed) reject(storeError("error.idbAbort", tx.error));
     };
   });
 }
@@ -61,8 +72,8 @@ function requestAndDone(tx, req) {
 function finish(tx) {
   return new Promise((resolve, reject) => {
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error || new Error("IndexedDB write failed"));
-    tx.onabort = () => reject(tx.error || new Error("IndexedDB write aborted"));
+    tx.onerror = () => reject(storeError("error.idbWrite", tx.error));
+    tx.onabort = () => reject(storeError("error.idbWriteAbort", tx.error));
   });
 }
 
