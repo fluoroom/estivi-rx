@@ -54,6 +54,21 @@ let noiseSize = "";
 // just changes the view, so a stray press cannot cut a live picture.
 const RESET_ABORT_SHARE = 0.3;
 
+let installPrompt = null;
+
+window.addEventListener("beforeinstallprompt", (ev) => {
+  ev.preventDefault();
+  installPrompt = ev;
+  const btn = document.getElementById("install");
+  if (btn) btn.hidden = false;
+});
+
+window.addEventListener("appinstalled", () => {
+  installPrompt = null;
+  const btn = document.getElementById("install");
+  if (btn) btn.hidden = true;
+});
+
 function dbToGain(v) {
   return 10 ** (Number(v) / 20);
 }
@@ -893,6 +908,8 @@ function applyTheme(next) {
   theme = next === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = theme;
   document.documentElement.style.colorScheme = theme;
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.content = theme === "light" ? "#f3f3f3" : "#101010";
   $("theme").textContent = theme === "dark" ? t("theme.toLight") : t("theme.toDark");
 }
 
@@ -1070,6 +1087,22 @@ function initControls() {
     if (receivingPicture && engine && stalledLongEnough()) engine.abortPicture();
     showLive();
   });
+  $("install").addEventListener("click", async () => {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    try {
+      await installPrompt.userChoice;
+    } finally {
+      installPrompt = null;
+      $("install").hidden = true;
+    }
+  });
+  if (
+    window.matchMedia("(display-mode: standalone)").matches ||
+    window.navigator.standalone === true
+  ) {
+    $("install").hidden = true;
+  }
   $("clear").addEventListener("click", async () => {
     if (!window.confirm(t("confirm.clearImages"))) return;
     try {
@@ -1163,6 +1196,9 @@ async function boot() {
     renderGuide();
   });
   refreshDevices();
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register(new URL("sw.js", document.baseURI)).catch(() => {});
+  }
   start({ quiet: true });
 }
 

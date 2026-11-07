@@ -12,6 +12,12 @@ Then open [http://localhost:8086](http://localhost:8086). The page asks for the 
 
 A browser only gives a page the microphone over HTTPS or on localhost, so keep that in mind when you put it on a server.
 
+### Install it
+
+Chromium browsers (Chrome, Edge, Samsung Internet) show an **Install app** button in the visor bar once the page qualifies, and the same option appears in the address bar. Installed, it opens in its own window with its own icon. On iPhone and iPad, use Share → Add to Home Screen.
+
+The page keeps a cached copy of its shell through a service worker, so it still opens when the network is away.
+
 To leave it running:
 
 ```sh
@@ -121,7 +127,7 @@ Only the analog YoniQ mode is decoded. The former DGT YQ clean-copy button, its 
 
 ## Files, tests and storage
 
-`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS and CSS.
+`www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS and CSS. The installable side lives in `manifest.webmanifest`, `sw.js` and `icons/`, all under `www/`.
 
 `test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, mid-image starts, lost-signal recovery, translations and the guide. Those tests are not copied into the image.
 
