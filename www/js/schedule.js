@@ -8,7 +8,9 @@
 // the local day it was heard. Rules stay in storage until the calendar is
 // cleared.
 
-export const GUIDE_DAYS = 14;
+// Today plus 30 days ahead, so the calendar always reaches the same day next
+// month instead of stopping at the end of the current one.
+export const GUIDE_DAYS = 31;
 export const MAX_DAYSLEFT = 99;
 export const EXTRA_SPAN_MS = 12 * 60 * 60 * 1000;
 

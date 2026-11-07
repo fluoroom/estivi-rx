@@ -11,7 +11,10 @@ test("English and Spanish carry the same keys", () => {
 test("every key used by the page exists in both languages", () => {
   const root = new URL("../www/", import.meta.url);
   const files = ["index.html", "js/app.js", "js/engine.js", "js/store.js"];
-  const keys = new Set(["dow.0", "dow.1", "dow.2", "dow.3", "dow.4", "dow.5", "dow.6"]);
+  const keys = new Set([
+    ...Array.from({ length: 7 }, (_, i) => `dow.${i}`),
+    ...Array.from({ length: 12 }, (_, i) => `month.${i}`),
+  ]);
   for (const file of files) {
     const text = readFileSync(new URL(file, root), "utf8");
     for (const m of text.matchAll(/data-i18n(?:-title|-aria)?="([^"]+)"/g)) keys.add(m[1]);

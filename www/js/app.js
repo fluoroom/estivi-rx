@@ -504,7 +504,7 @@ function renderCalendar(guide) {
     const card = document.createElement("section");
     card.className = "day";
     const h = document.createElement("h3");
-    h.textContent = `${t(`dow.${day.date.getDay()}`)} ${day.date.getDate()}`;
+    h.textContent = `${t(`dow.${day.date.getDay()}`)} ${day.date.getDate()} ${t(`month.${day.date.getMonth()}`)}`;
     card.append(h);
     const inner = document.createElement("div");
     inner.className = "day-body";
