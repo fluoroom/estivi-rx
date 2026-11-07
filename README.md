@@ -52,7 +52,7 @@ The page starts in English, or in Spanish when the browser prefers Spanish. The 
 
 The visor is the picture. Its shape follows the mode that is decoding; with nothing arriving it is 320×256. It is scaled to fit the window and the whole frame stays visible.
 
-Under the picture, still outside it, are the program or image name with the mode in a smaller grey label after it, the resize style button (**Blur / Pixels**), **Save**, **Delete**, **Fullscreen** and **Reset**. Delete only appears for a saved picture, and it asks before removing that one picture. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
+Under the picture, still outside it, are the program or image name with the mode in a smaller grey label after it, the resize style button (**Blur / Pixels**), **Save**, **Delete**, **Fullscreen** and **Reset**. On the live view in Auto the label reads `Auto (mode name)`, so the last mode received is not mistaken for a manual choice. Delete only appears for a saved picture, and it asks before removing that one picture. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
 
 **Blur** is the default: it smooths the received picture up to the visor size. **Pixels** keeps each received pixel a hard block. The button names the mode you get if you click it, so it reads Pixels while Blur is on and Blur while Pixels is on; hovering it says *Resize style*. Timeline thumbnails stay sharp pixels either way.
 

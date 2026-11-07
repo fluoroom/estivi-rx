@@ -234,8 +234,13 @@ function modeName(short) {
 }
 
 function liveModeName() {
-  const mode = selectedMode() || modeByShort(lastMode);
-  return mode ? mode.name : "";
+  const chosen = selectedMode();
+  if (chosen) return chosen.name;
+  // Auto: say so, and name the mode it would use. Without it the label reads
+  // like a manual choice of the last mode received.
+  const last = modeByShort(lastMode);
+  const auto = t("mode.auto");
+  return last ? `${auto} (${last.name})` : auto;
 }
 
 function setName(text, mode) {
