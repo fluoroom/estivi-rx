@@ -1,60 +1,82 @@
 # Estivi RX
 
-Estivi RX is the browser receiver for [Estivi](https://github.com/fluoroom/estivi-tx). It listens to the audio from your radio through the microphone, decodes the AX.25 messages and the SSTV pictures the transmitter sends, and draws them on one page. Everything runs in the browser: there is no decoder on the server, and the Docker container only serves the static files.
+**English** · [Español](README_ES.md)
 
-## Run it
+**SSTV, live in your browser.**
 
-```sh
-docker compose up --build
-```
+Estivi RX is the receiver for [Estivi](https://github.com/fluoroom/estivi-tx). It listens to a radio through your microphone, turns the audio into a frequency stream, decodes the SSTV pictures and the AX.25 program guide, and lays everything out on one page. There is no decoder on the server: the container only serves static files.
 
-Then open [http://localhost:8086](http://localhost:8086). The page asks for the microphone and starts receiving on its own. If you deny the permission it stays quiet; press **Start receiving** and it will tell you why.
+<p align="center">
+  <img src="docs/screenshots/main.png" alt="Estivi RX: a received sunset picture in the visor, the timeline underneath, and the station's hour row" width="920">
+</p>
 
-A browser only gives a page the microphone over HTTPS or on localhost, so keep that in mind when you put it on a server.
+<p align="center"><em>The visor, the timeline, and the station's hour row, all on one page.</em></p>
 
-### Install it
+`Runs in the browser` · `No backend` · `Installable` · `JavaScript + Web Audio`
 
-Chromium browsers (Chrome, Edge, Samsung Internet) show an **Install app** button in the visor bar once the page qualifies, and the same option appears in the address bar. Installed, it opens in its own window with its own icon. On iPhone and iPad, use Share → Add to Home Screen.
+## What it does
 
-The page keeps a cached copy of itself — page, scripts, fonts and icons — through a service worker, so after the first visit it still opens when the network is away.
+- **Listens through the microphone.** Or through the receiver's line audio. Pick the input, mono, left or right, set the gain, and watch the level meter. The browser's echo cancellation, noise reduction, and automatic gain stay off.
+- **Decodes the picture.** Martin, Scottie, Robot, PD and YoniQ, in color, locked from the VIS header or picked up mid-image from the line syncs.
+- **Reads the station's guide.** AX.25 UI frames carry the programs, their clock, their days and what comes next. The page turns them into an hour row and a calendar without any date on the air.
+- **Keeps a timeline.** Every finished or half-finished picture is stored as a lossless PNG, newest first, up to 40. Click a thumbnail to bring it back; the live decoder is always the first slot.
+- **Follows the clock.** The hour row starts at the top of the current hour and runs until 12 hours past the last program. A yellow line travels with the local clock, and a thin mark sits on every saved picture.
+- **Holds a bad signal together.** A short fade does not throw the picture away: the decoder waits 30% of the mode's picture time and picks up where the signal returns.
+- **Installs like an app.** Chromium browsers offer **Install app**; iPhone and iPad use Share → Add to Home Screen. A service worker keeps the page, scripts, fonts and icons available offline after the first visit.
+- **Remembers everything.** Pictures, the guide and the preferences live in IndexedDB, so a reload changes nothing.
+- **Speaks English and Spanish.** It follows the browser's language by default; the selector can force either one.
 
-To leave it running:
+## A closer look
+
+<p align="center">
+  <img src="docs/screenshots/calendar.png" alt="The calendar: one card per day with programs, each block showing its local time and callsign" width="880">
+</p>
+
+<p align="center"><em>The calendar opens today and the next 30 days, and only shows the days that have programs.</em></p>
+
+<p align="center">
+  <img src="docs/screenshots/light.png" alt="Estivi RX in the light theme, with the same received picture and timeline" width="920">
+</p>
+
+<p align="center"><em>The same page in the light theme. Dark is the default; the header button switches and remembers.</em></p>
+
+## Listen now
+
+The public receiver lives at **[estivi-rx.lu1aqy.radio](https://estivi-rx.lu1aqy.radio)**. Open it, allow the microphone, and point the microphone at your receiver's speaker, or feed it the receiver's line audio. Decoding happens in the page; the server only serves static files.
+
+A browser only gives a page the microphone over HTTPS or on localhost, so the public copy runs behind TLS. After the first visit it opens offline.
+
+### Run your own
 
 ```sh
 docker compose up -d --build
 ```
 
+Then open [http://localhost:8086](http://localhost:8086). The page asks for the microphone and starts receiving on its own. If you deny it, it stays quiet; press **Start receiving** and it will tell you why.
+
 The container restarts unless you stop it by hand. It serves plain HTTP on host port 8086; put your nginx in front for TLS and headers.
 
-To check the decoder without a microphone:
+### Check the decoder without a radio
 
 ```sh
 npm test
 ```
 
+The tests build synthetic Estivi audio and check the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, mid-image starts, lost-signal recovery, translations and the guide.
+
 ## A tour of the page
 
 ### The header
 
-The header is where you set things up. From left to right:
-
-- the title and a local clock with seconds, with a small UTC clock underneath;
-- the input device, and **Mono / Left / Right**;
-- input gain, from −12 dB to +36 dB in 0.5 dB steps — the slider turns red above 0 dB;
-- the level meter, about −42 dB to 0 dB;
-- the SSTV mode, and **Start / Stop receiving**;
-- the theme button, which names the theme you switch to (Light while the page is dark, Dark while it is light; dark is the default);
-- the language selector.
-
-The page starts in English, or in Spanish when the browser prefers Spanish. The selector offers Auto, English and Español, and its Auto option follows the browser again. A forced choice is saved with the other preferences.
+From left to right: the title and a local clock with seconds, with a small UTC clock underneath; the input device and **Mono / Left / Right**; the input gain, from −12 dB to +36 dB in 0.5 dB steps, turning red above 0 dB; the level meter, about −42 dB to 0 dB; the SSTV mode and **Start / Stop receiving**; the theme button, which names the theme you switch to; and the language selector.
 
 ### The visor
 
 The visor is the picture. Its shape follows the mode that is decoding; with nothing arriving it is 320×256. It is scaled to fit the window and the whole frame stays visible.
 
-Under the picture, still outside it, are the program or image name with the mode in a smaller grey label after it, the resize style button (**Blur / Pixels**), **Save**, **Delete**, **Fullscreen** and **Reset**. On the live view in Auto the label reads `Auto (mode name)`, so the last mode received is not mistaken for a manual choice. Delete only appears for a saved picture, and it asks before removing that one picture. Color is decoded to full-range RGB, the transmitter's default, with no studio-range switch.
+Under the picture, still outside it, are the program or image name with the mode in a smaller grey label after it, the resize style button (**Blur / Pixels**), **Save**, **Delete**, **Fullscreen** and **Reset**. On the live view in Auto the label reads `Auto (mode name)`, so the last mode received is not mistaken for a manual choice. Delete only appears for a saved picture, and it asks before removing that one picture.
 
-**Blur** is the default: it smooths the received picture up to the visor size. **Pixels** keeps each received pixel a hard block. The button names the mode you get if you click it, so it reads Pixels while Blur is on and Blur while Pixels is on; hovering it says *Resize style*. Timeline thumbnails stay sharp pixels either way.
+**Blur** is the default: it smooths the received picture up to the visor size. **Pixels** keeps each received pixel a hard block. The button names the mode you get if you click it, so it reads Pixels while Blur is on and Blur while Pixels is on.
 
 **Save** writes the received pixels as a lossless PNG named `estivi-rx-YY-MM-DD-HH-mm-MODE.png`, using the save time and the picture's mode short code. It does not include the grain or the enlargement.
 
@@ -66,12 +88,6 @@ The first slot is always the live decoder. Clicking it, or Reset, puts the big v
 
 A new reception shows the live picture as it arrives, then holds the finished image. The copy is stored when the reception ends and becomes the second timeline entry. The thin receive marks on the hour row open the same saved picture.
 
-If the signal disappears during a picture, the page holds the partial picture and keeps looking for the same mode's lines for 30% of that mode's picture time. If the signal returns, the picture continues from where it now is and the lines lost in between stay empty. If it does not return in time, the partial picture is saved to the timeline and the visor goes back to live view.
-
-Reset gives up on the partial picture too, but only once the signal has been gone for 30% of that window (10.3 s for Martin M1, 3.2 s for Robot 36, 11.3 s for PD 120, 6.3 s for YoniQ); before then it just changes the view. A new VIS also ends the partial picture and starts the next one.
-
-The timeout is per mode: 34.3 s for Martin M1, 10.8 s for Robot 36, 37.8 s for PD 120, and 21.0 s for YoniQ. **Clear image memory** asks before it drops every picture and leaves the schedule alone.
-
 ### The hour row
 
 Under the timeline, the hour row starts at the top of the current hour and runs until 12 hours after the last program still on today's guide. That window stays put so the yellow line can travel with the clock, and it is pinned again when the clock leaves it. A thin mark sits on each saved picture whose receive time falls inside the row. The same clock hour can appear twice when the row crosses midnight.
@@ -80,13 +96,19 @@ Under the timeline, the hour row starts at the top of the current hour and runs 
 
 Calendar opens today and the next 30 days and shows only the days that have programs. Each card is headed with the weekday, day and month, so the window runs from, say, 7 Nov to 7 Dec.
 
-A program that crosses midnight stays one entry, `23:30–00:30`, and is not cut at 00:00; the hour row draws it as one block too, and a block still running after midnight also appears on today's card. Only blocks that overlap share lanes: two overlapping programs are split side by side, while a block with nothing beside it takes the full height in the hour row and the full width in the calendar. Same-callsign overlaps split the same way. **Clear calendar** asks before it deletes every program.
+A program that crosses midnight stays one entry, `23:30–00:30`, and is not cut at 00:00; the hour row draws it as one block too, and a block still running after midnight also appears on today's card. Only blocks that overlap share lanes: two overlapping programs are split side by side, while a block with nothing beside it takes the full height in the hour row and the full width in the calendar. Same-callsign overlaps split the same way.
+
+**Clear image memory** asks before it drops every picture and leaves the schedule alone. **Clear calendar** asks before it deletes every program.
 
 The footer reads `LU1AQY 2026` and links to [lu1aqy.radio](https://lu1aqy.radio). The page title is `estivi rx`.
 
 ## What it receives
 
-Audio goes through a gain stage into an AudioWorklet, which demodulates the tone. AX.25 and SSTV run on the page from that frequency stream. Playback through the speakers is off, and the browser's echo cancellation, noise reduction and automatic gain are off too.
+```text
+receiver ──▶ microphone ──▶ AudioWorklet ──▶ AX.25 + SSTV ──▶ the page
+```
+
+Audio goes through a gain stage into an AudioWorklet, which demodulates the tone. AX.25 and SSTV run on the page from that frequency stream. Playback through the speakers is off.
 
 ### AX.25
 
@@ -125,11 +147,19 @@ A few modes have their own habits: Martin M3 and M4 send half the rows and each 
 
 Only the analog YoniQ mode is decoded. The former DGT YQ clean-copy button, its FTP process and the `/dgt/` proxy are gone.
 
-## Files, tests and storage
+### When the signal goes away
+
+If the signal disappears during a picture, the page holds the partial picture and keeps looking for the same mode's lines for 30% of that mode's picture time. If the signal returns, the picture continues from where it now is and the lines lost in between stay empty. If it does not return in time, the partial picture is saved to the timeline and the visor goes back to live view.
+
+Reset gives up on the partial picture too, but only once the signal has been gone for 30% of that window (10.3 s for Martin M1, 3.2 s for Robot 36, 11.3 s for PD 120, 6.3 s for YoniQ); before then it just changes the view. A new VIS also ends the partial picture and starts the next one.
+
+The timeout is per mode: 34.3 s for Martin M1, 10.8 s for Robot 36, 37.8 s for PD 120, and 21.0 s for YoniQ.
+
+## Files and storage
 
 `www/` is the page. The compose file publishes it on host port 8086; inside the container nginx serves it on 80, with `nginx.conf` sending `no-cache` for HTML, JS and CSS. The installable side lives in `manifest.webmanifest`, `sw.js` and `icons/`, all under `www/`.
 
-`test/` builds synthetic Estivi audio and checks the demodulator, the line times, AX.25 at 48000 and 44100, a picture at about −35 dB, mid-image starts, lost-signal recovery, translations and the guide. Those tests are not copied into the image.
+`test/` builds the synthetic audio and runs the checks above. Those tests are not copied into the image.
 
 Everything the page remembers lives in IndexedDB under the database name `estivi rx`: the pictures as lossless PNG blobs, newest first and capped at 40, plus the guide and the preferences (device, channel, gain, SSTV mode, the last mode actually received, theme, scaling choice and language). Deleting one picture removes only that one; clearing the pictures does not clear the guide, and clearing the guide does not touch the pictures.
 
